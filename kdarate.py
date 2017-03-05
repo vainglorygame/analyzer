@@ -30,11 +30,12 @@ class KDAClassifier(object):
         # database mappings
         self._paths = {
             "id": "id",
-            "kills": "(data->'attributes'->'stats'->>'kills')::int",
-            "deaths": "(data->'attributes'->'stats'->>'deaths')::int",
-            "assists": "(data->'attributes'->'stats'->>'assists')::int",
+            "kills": "kills",
+            "deaths": "deaths",
+            "assists": "assists",
+#            "teamkills": "(SELECT hero_kills FROM roster WHERE roster.api_id=participant.roster_api_id)",
 #            "actor": "data->'attributes'->>'actor'",
-            "win": "(data->'attributes'->'stats'->>'winner')::bool::int"
+            "win": "winner"
         }
 #        for n in range(0, 6):
 #            self._paths["item"+str(n)] = \
@@ -46,15 +47,6 @@ class KDAClassifier(object):
         """Connect to the database."""
         # TODO with current synchronous implementation, pooling isn't needed
         self._pool = await asyncpg.create_pool(dbstring)
-
-        # create layout
-        # maps participant -> role jsonb
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    # TODO do this globally etc
-                    "CREATE TABLE IF NOT EXISTS enhanced_participant_wip" +
-                    "(participant_id TEXT PRIMARY KEY, actor JSONB)")
 
     def connect(self, dbstring):
         """See _async_connect."""
@@ -159,6 +151,8 @@ class KDAClassifier(object):
         sample = self._get_sample(
             size=batchsize, offset=self._step)
         self._step += batchsize
+        if len(sample["kills"]) < batchsize:  # TODO!
+            print("!!!!!!!!!! data exhausted !!!!!!!!!!!!!!!")
         return self._toinput(sample, train=True)
 
     def train(self):
@@ -172,7 +166,7 @@ class KDAClassifier(object):
         # get one batch of testing data
         # TODO either terminate with `eval_steps` or with OutOfRangeError
         validation_monitor = tf.contrib.learn.monitors.ValidationMonitor(
-            input_fn=lambda: self._toinput(self._get_sample(size=1000, offset=101000), train=True),
+            input_fn=lambda: self._toinput(self._get_sample(size=1000, offset=0), train=True),
             eval_steps=1,
             every_n_steps=20,
             early_stopping_metric="accuracy",
@@ -234,12 +228,15 @@ class KDAClassifier(object):
 
 def main():
     classifier = KDAClassifier()
-    classifier.connect("postgres://vgstats@localhost/vgstats")
+    classifier.connect("postgres://vainweb:vainweb@localhost/vainsocial-web")
+    sample = classifier._get_sample(size=10, offset=0)  # DEBUG
+    classifier._step = 1000  # test batch size
+    print(sample)
     # TODO train only for the latest patch.
     print("training")
     classifier.train()
     print("done training")
-    sample = classifier._get_sample(size=10, offset=102000) # DEBUG
+    sample = classifier._get_sample(size=10, offset=0)  # DEBUG
     print(sample)
     # TODO train batches/fixed number
     print("classifying debug data")
