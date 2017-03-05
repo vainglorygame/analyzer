@@ -5,16 +5,39 @@ import itertools
 import json
 import asyncio
 import asyncpg
+import logging
 import numpy as np
 import tensorflow as tf
-tf.logging.set_verbosity(tf.logging.INFO)
+import psycopg2
+
+import joblib.worker
+
+#tf.logging.set_verbosity(tf.logging.WARNING)
+
+queue_db = {
+    "host": os.environ.get("POSTGRESQL_SOURCE_HOST") or "localhost",
+    "port": os.environ.get("POSTGRESQL_SOURCE_PORT") or 5433,
+    "user": os.environ.get("POSTGRESQL_SOURCE_USER") or "vainraw",
+    "password": os.environ.get("POSTGRESQL_SOURCE_PASSWORD") or "vainraw",
+    "database": os.environ.get("POSTGRESQL_SOURCE_DB") or "vainsocial-raw"
+}
+
+db_config = {
+    "host": os.environ.get("POSTGRESQL_DEST_HOST") or "localhost",
+    "port": os.environ.get("POSTGRESQL_DEST_PORT") or 5432,
+    "user": os.environ.get("POSTGRESQL_DEST_USER") or "vainweb",
+    "password": os.environ.get("POSTGRESQL_DEST_PASSWORD") or "vainweb",
+    "database": os.environ.get("POSTGRESQL_DEST_DB") or "vainsocial-web"
+}
 
 
+# TODO create abstract class, move to own file
 class KDAClassifier(object):
     """A DNN that classifies loss/win based on KDA."""
     def __init__(self):
         self.model = None
-        self.modeldir = "/tmp/vgstats-tf-actor-model"
+        self.modeldir = os.path.realpath(
+            os.path.join(os.getcwd(), os.path.dirname(__file__))) + "/models/kda-win"
         self._pool = None
 
         # DNN configuration
@@ -26,35 +49,24 @@ class KDAClassifier(object):
         # learn configuration
         self._steps = 200  # per batch
         self._max_batches = 20  # number of batches to train
+        self._testset = 1000  # size of testing sample
 
         # database mappings
         self._paths = {
-            "id": "id",
             "kills": "kills",
             "deaths": "deaths",
             "assists": "assists",
 #            "teamkills": "(SELECT hero_kills FROM roster WHERE roster.api_id=participant.roster_api_id)",
-#            "actor": "data->'attributes'->>'actor'",
             "win": "winner"
         }
-#        for n in range(0, 6):
-#            self._paths["item"+str(n)] = \
-#            "COALESCE(data->'attributes'->'stats'->'items'->>" + str(n) +", '')"
 
-        self._step = 0  # saves batch learning state
+        self._step = self._testset  # saves batch learning state
 
-    async def _async_connect(self, dbstring):
-        """Connect to the database."""
-        # TODO with current synchronous implementation, pooling isn't needed
-        self._pool = await asyncpg.create_pool(dbstring)
+    def connect(self, **args):
+        self._conn = psycopg2.connect(**args)
 
-    def connect(self, dbstring):
-        """See _async_connect."""
-        asyncio.get_event_loop().run_until_complete(
-            self._async_connect(dbstring))
-
-    # TODO maybe don't use asyncpg
-    async def _async_get_sample(self, size="ALL", offset=0):
+    # TODO this should be more random
+    def _get_sample(self, size="ALL", offset=0, filter=""):
         """Return a data set from the database.
         :param size: (optional) The number of items to get. Defaults to `All`.
         :type size: int or str
@@ -64,27 +76,26 @@ class KDAClassifier(object):
         """
         query = "SELECT "
         elements = []
+        # TODO use parameters
         for name, path in self._paths.items():
             elements.append(
-                """
+                ("""
                 ARRAY(SELECT
                   {3}
-                  FROM participant
+                  FROM participant """ + filter + """
                   ORDER BY id
                   LIMIT {0} OFFSET {1}
                 ) AS {2}
-                """.format(size, offset, name, path))
+                """).format(size, offset, name, path))
 
         query += ", ".join(elements)
 
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                return (await conn.fetch(query))[0]
-
-    def _get_sample(self, size="ALL", offset=0):
-        """See _async_get_sample."""
-        return asyncio.get_event_loop().run_until_complete(
-            self._async_get_sample(size, offset))
+        cur = self._conn.cursor()
+        cur.execute(query)
+        data = cur.fetchone()
+        data = {"kills": data[0], "deaths": data[1], "assists": data[2], "win": data[3]}
+        cur.close()
+        return data
 
     def _model_setup(self):
         """Sets up a model that takes the `num_features` features as input."""
@@ -113,6 +124,7 @@ class KDAClassifier(object):
             )
         )
 
+    # TODO tf warning - dimensions are wrong
     def _toinput(self, sample, train=True):
         """Convert sample to Tensors.
         :param sample: Data dictionary.
@@ -152,7 +164,7 @@ class KDAClassifier(object):
             size=batchsize, offset=self._step)
         self._step += batchsize
         if len(sample["kills"]) < batchsize:  # TODO!
-            print("!!!!!!!!!! data exhausted !!!!!!!!!!!!!!!")
+            logging.error("data exhausted!")
         return self._toinput(sample, train=True)
 
     def train(self):
@@ -160,7 +172,7 @@ class KDAClassifier(object):
         self._model_setup()
 
         if os.path.isdir(self.modeldir):
-            print("already trained, not training again")
+            logging.warning("already trained, not training again")
             return
 
         # get one batch of testing data
@@ -176,6 +188,7 @@ class KDAClassifier(object):
 
         # validation monitor stops learning if the accuracy does not increase of 100 steps
         for _ in range(self._max_batches):
+            logging.info("training batch %s", _)
             self.model.fit(
                 input_fn=lambda: self._more(),
                 steps=self._steps,
@@ -196,55 +209,105 @@ class KDAClassifier(object):
         else:
             return self.model.predict_proba(input_fn=lambda: self._toinput(sample, train=False))
 
-    async def classify_db(self):
-        # TODO rewrite
+    def windup(self):
+        pass
+
+    def teardown(self, failed=False):
+        if failed:
+            pass
+        else:
+            self._conn.commit()
+
+    def classify_db(self, objids):
         """Classify all data in the data base and insert."""
-        sample = self._get_sample(identified=True)
-
         # split sample (with participant ids) into data and ids
-        data = np.array(
-            [[val for key, val in s.items() if key != "id"] for s in sample]
-        )
-        ids = [s["id"] for s in sample]
-        # let the DNN do the work
-        predicts = self.classify(data)
-
-        # convert numpy->dict->json for db
-        predicts = [
-            json.dumps({
-                k: float(v) for k, v in p.items()
-            }) for p in predicts
-        ]
-        dbdata = list(zip(ids, predicts))
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.executemany(
-                    """INSERT INTO enhanced_participant_wip(participant_id, actor)
-                       VALUES ($1, $2)
-                       ON CONFLICT (participant_id) DO
-                       UPDATE SET data=$2
-                    """, dbdata)
+        # TODO use parameters
+        logging.error("sample size: %s", len(objids))
+        sample = self._get_sample(
+            filter="WHERE api_id in ('"+"','".join(objids)+"')")
+        d = self.classify(sample)
+        cnt = 0
+        cur = self._conn.cursor()
+        for l in itertools.islice(d, len(objids)):
+            cur.execute("""
+                INSERT INTO participant_stats
+                (patch_version, participant_api_id, score)
+                VALUES(2.2, %(objid)s, %(score)s)
+                ON CONFLICT(participant_api_id) DO
+                UPDATE SET score=%(score)s
+            """, {"objid": objids[cnt], "score": float(l[1])})
+            cnt += 1
+        cur.close()
 
 
-def main():
-    classifier = KDAClassifier()
-    classifier.connect("postgres://vainweb:vainweb@localhost/vainsocial-web")
-    sample = classifier._get_sample(size=10, offset=0)  # DEBUG
-    classifier._step = 1000  # test batch size
-    print(sample)
-    # TODO train only for the latest patch.
-    print("training")
-    classifier.train()
-    print("done training")
-    sample = classifier._get_sample(size=10, offset=0)  # DEBUG
-    print(sample)
-    # TODO train batches/fixed number
-    print("classifying debug data")
-    d = classifier.classify(sample)
-    for l in itertools.islice(d, 10):
-        print(l)
-    print(sample["win"])
-    print("classified")
-    #classifier.classify_db()
+class Analyzer(joblib.worker.Worker):
+    def __init__(self):
+        self._pool = None
+        self._queries = {}
+        super().__init__(jobtype="analyze")
+        self.classifier = None
 
-main()
+    async def connect(self, dbconf, queuedb):
+        """Connect to database."""
+        logging.warning("connecting to database")
+        await super().connect(**queuedb)
+        self._pool = await asyncpg.create_pool(**dbconf)
+        self.classifier = KDAClassifier()
+        self.classifier.connect(**dbconf)
+        self.classifier._step = 1000  # TODO test batch size
+
+    async def setup(self):
+        """Setup the model."""
+        self.classifier.train()
+
+    async def _windup(self):
+        self._con = await self._pool.acquire()
+        self._tr = self._con.transaction()
+        await self._tr.start()
+        self.classifier.windup()
+        self._participants = []
+
+    async def _teardown(self, failed):
+        if len(self._participants) > 0:
+            # TODO if this fails, job is still marked as finished
+            self.classifier.classify_db(self._participants)
+
+        if failed:
+            await self._tr.rollback()
+        else:
+            await self._tr.commit()
+        await self._pool.release(self._con)
+        self.classifier.teardown()
+    
+    async def _execute_job(self, jobid, payload, priority):
+        object_id = payload["id"]
+        object_type = payload["type"]
+        if object_type != "participant":
+            return
+        self._participants.append(object_id)
+        logging.info("%s: classifying '%s', %s", jobid,
+                     object_type, object_id)
+
+async def startup():
+    for _ in range(1):
+        worker = Analyzer()
+        await worker.connect(db_config, queue_db)
+        await worker.setup()
+        await worker.start(batchlimit=100)
+
+
+logging.basicConfig(
+    filename=os.path.realpath(
+        os.path.join(os.getcwd(),
+                 os.path.dirname(__file__))) +
+        "/logs/analyzer.log",
+    filemode="a",
+    level=logging.DEBUG
+)
+console = logging.StreamHandler()
+console.setLevel(logging.WARNING)
+logging.getLogger("").addHandler(console)
+
+loop = asyncio.get_event_loop()
+loop.run_until_complete(startup())
+loop.run_forever()
