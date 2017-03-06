@@ -42,60 +42,58 @@ class KDAClassifier(object):
 
         # DNN configuration
         self._categories = []
-        self._continuous = ["kills", "deaths", "assists"]
+        self._continuous = ["kills", "deaths", "assists", "cs", "teamkills"]
         self._classes = ["loss", "win"]
         self._label = "win"
 
         # learn configuration
-        self._steps = 200  # per batch
-        self._max_batches = 20  # number of batches to train
-        self._testset = 1000  # size of testing sample
+        self._steps = 300  # per batch
+        self._max_batches = 3  # number of batches to train
 
         # database mappings
-        self._paths = {
-            "kills": "kills",
-            "deaths": "deaths",
-            "assists": "assists",
-#            "teamkills": "(SELECT hero_kills FROM roster WHERE roster.api_id=participant.roster_api_id)",
-            "win": "winner"
-        }
-
-        self._step = self._testset  # saves batch learning state
+        self._query = """
+            SELECT
+                participant.kills,
+                participant.deaths,
+                participant.assists,
+                participant.farm,
+                roster.hero_kills,
+                participant.winner,
+                participant.api_id
+            FROM participant
+            TABLESAMPLE BERNOULLI(%s)
+            JOIN roster on participant.roster_api_id=roster.api_id
+            JOIN match on roster.match_api_id=match.api_id
+        """
 
     def connect(self, **args):
         self._conn = psycopg2.connect(**args)
 
-    # TODO this should be more random
-    def _get_sample(self, size="ALL", offset=0, filter=""):
+    def _get_sample(self, percent=100.0, filter=None):
         """Return a data set from the database.
         :param size: (optional) The number of items to get. Defaults to `All`.
         :type size: int or str
         :param offset: (optional) The SQL OFFSET parameter.
         :type offset: int or str
-        :type identified: bool
         """
-        query = "SELECT "
-        elements = []
-        # TODO use parameters
-        for name, path in self._paths.items():
-            elements.append(
-                ("""
-                ARRAY(SELECT
-                  {3}
-                  FROM participant """ + filter + """
-                  ORDER BY id
-                  LIMIT {0} OFFSET {1}
-                ) AS {2}
-                """).format(size, offset, name, path))
-
-        query += ", ".join(elements)
-
         cur = self._conn.cursor()
-        cur.execute(query)
-        data = cur.fetchone()
-        data = {"kills": data[0], "deaths": data[1], "assists": data[2], "win": data[3]}
+        if filter is None:
+            cur.execute(self._query, (percent,))
+        else:
+            cur.execute(self._query + " WHERE participant.api_id=ANY(%s)", (percent, filter))
+        ids = []
+        data = {"kills": [], "deaths": [], "assists": [], "win": [], "cs": [], "teamkills": []}
+        for rec in cur:
+            data["kills"].append(rec[0])
+            data["deaths"].append(rec[1])
+            data["assists"].append(rec[2])
+            data["cs"].append(rec[3])
+            data["teamkills"].append(rec[4])
+            data["win"].append(rec[5])
+            ids.append(rec[6])
         cur.close()
-        return data
+        logging.debug(data)
+        return data, ids
 
     def _model_setup(self):
         """Sets up a model that takes the `num_features` features as input."""
@@ -151,20 +149,12 @@ class KDAClassifier(object):
             return features
 
     # TODO use asyncpg cursor https://magicstack.github.io/asyncpg/current/api/index.html#cursors
-    def _more(self, batchsize=500, limit=None):
+    def _more(self):
         """Fetches up to `limit` number of training items
            from the database in batches."""
         # TODO maybe you can use an iterator?
-        if limit:
-            if self._step > limit:
-#               self._step = 0
-                # TODO ????
-                raise tf.errors.OutOfRangeError
-        sample = self._get_sample(
-            size=batchsize, offset=self._step)
-        self._step += batchsize
-        if len(sample["kills"]) < batchsize:  # TODO!
-            logging.error("data exhausted!")
+        sample = self._get_sample(percent=1.0)[0]
+        logging.error("more %s", len(sample["kills"]))
         return self._toinput(sample, train=True)
 
     def train(self):
@@ -178,17 +168,12 @@ class KDAClassifier(object):
         # get one batch of testing data
         # TODO either terminate with `eval_steps` or with OutOfRangeError
         validation_monitor = tf.contrib.learn.monitors.ValidationMonitor(
-            input_fn=lambda: self._toinput(self._get_sample(size=1000, offset=0), train=True),
+            input_fn=lambda: self._toinput(self._get_sample(percent=5)[0], train=True),
             eval_steps=1,
-            every_n_steps=20,
-            early_stopping_metric="accuracy",
-            early_stopping_metric_minimize=False,
-            early_stopping_rounds=100
+            every_n_steps=10
         )
 
-        # validation monitor stops learning if the accuracy does not increase of 100 steps
         for _ in range(self._max_batches):
-            logging.info("training batch %s", _)
             self.model.fit(
                 input_fn=lambda: self._more(),
                 steps=self._steps,
@@ -223,8 +208,7 @@ class KDAClassifier(object):
         # split sample (with participant ids) into data and ids
         # TODO use parameters
         logging.error("sample size: %s", len(objids))
-        sample = self._get_sample(
-            filter="WHERE api_id in ('"+"','".join(objids)+"')")
+        sample, objids = self._get_sample(filter=objids)
         d = self.classify(sample)
         cnt = 0
         cur = self._conn.cursor()
