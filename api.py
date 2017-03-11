@@ -47,11 +47,13 @@ class KDAClassifier(object):
         self._label = "win"
 
         # learn configuration
-        self._steps = 300  # per batch
-        self._max_batches = 3  # number of batches to train
+        self._steps = 50  # per batch
+        self._batchsize = 500
+        self._max_batches = 20  # number of batches to train
 
         # database mappings
-        self._query = """
+        # TODO cache, rm duplicated code
+        self._trainquery = """
             SELECT
                 participant.kills,
                 participant.deaths,
@@ -61,15 +63,30 @@ class KDAClassifier(object):
                 participant.winner,
                 participant.api_id
             FROM participant
-            TABLESAMPLE BERNOULLI(%s)
+            TABLESAMPLE BERNOULLI(5)
             JOIN roster on participant.roster_api_id=roster.api_id
             JOIN match on roster.match_api_id=match.api_id
+            LIMIT %s
+        """
+        self._testquery = """
+            SELECT
+                participant.kills,
+                participant.deaths,
+                participant.assists,
+                participant.farm,
+                roster.hero_kills,
+                participant.winner,
+                participant.api_id
+            FROM participant
+            JOIN roster on participant.roster_api_id=roster.api_id
+            JOIN match on roster.match_api_id=match.api_id
+            WHERE participant.api_id=ANY(%s)
         """
 
     def connect(self, **args):
         self._conn = psycopg2.connect(**args)
 
-    def _get_sample(self, percent=100.0, filter=None):
+    def _get_sample(self, size=None, filter=None):
         """Return a data set from the database.
         :param size: (optional) The number of items to get. Defaults to `All`.
         :type size: int or str
@@ -77,10 +94,11 @@ class KDAClassifier(object):
         :type offset: int or str
         """
         cur = self._conn.cursor()
+        assert (filter is None) ^ (size is None)
         if filter is None:
-            cur.execute(self._query, (percent,))
+            cur.execute(self._trainquery, (size,))
         else:
-            cur.execute(self._query + " WHERE participant.api_id=ANY(%s)", (percent, filter))
+            cur.execute(self._testquery, (filter,))
         ids = []
         data = {"kills": [], "deaths": [], "assists": [], "win": [], "cs": [], "teamkills": []}
         for rec in cur:
@@ -153,8 +171,7 @@ class KDAClassifier(object):
         """Fetches up to `limit` number of training items
            from the database in batches."""
         # TODO maybe you can use an iterator?
-        sample = self._get_sample(percent=1.0)[0]
-        logging.error("more %s", len(sample["kills"]))
+        sample = self._get_sample(size=self._batchsize)[0]
         return self._toinput(sample, train=True)
 
     def train(self):
@@ -168,7 +185,7 @@ class KDAClassifier(object):
         # get one batch of testing data
         # TODO either terminate with `eval_steps` or with OutOfRangeError
         validation_monitor = tf.contrib.learn.monitors.ValidationMonitor(
-            input_fn=lambda: self._toinput(self._get_sample(percent=5)[0], train=True),
+            input_fn=lambda: self._toinput(self._get_sample(size=1000)[0], train=True),
             eval_steps=1,
             every_n_steps=10
         )
