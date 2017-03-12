@@ -47,9 +47,9 @@ class KDAClassifier(object):
         self._label = "win"
 
         # learn configuration
-        self._steps = 50  # per batch
+        self._steps = 200  # per batch
         self._batchsize = 500
-        self._max_batches = 20  # number of batches to train
+        self._max_batches = 5  # number of batches to train
 
         # database mappings
         # TODO cache, rm duplicated code
