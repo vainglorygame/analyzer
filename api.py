@@ -294,7 +294,7 @@ async def startup():
         worker = Analyzer()
         await worker.connect(db_config, queue_db)
         await worker.setup()
-        await worker.start(batchlimit=100)
+        await worker.start(batchlimit=1000)
 
 
 logging.basicConfig(
