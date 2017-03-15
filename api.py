@@ -297,17 +297,7 @@ async def startup():
         await worker.start(batchlimit=1000)
 
 
-logging.basicConfig(
-    filename=os.path.realpath(
-        os.path.join(os.getcwd(),
-                 os.path.dirname(__file__))) +
-        "/logs/analyzer.log",
-    filemode="a",
-    level=logging.DEBUG
-)
-console = logging.StreamHandler()
-console.setLevel(logging.WARNING)
-logging.getLogger("").addHandler(console)
+logging.basicConfig(level=logging.DEBUG)
 
 loop = asyncio.get_event_loop()
 loop.run_until_complete(startup())
