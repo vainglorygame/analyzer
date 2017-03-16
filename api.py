@@ -42,24 +42,22 @@ class KDAClassifier(object):
 
         # DNN configuration
         self._categories = []
-        self._continuous = ["kills", "deaths", "assists", "cs", "teamkills"]
+        self._continuous = ["kills", "deaths", "assists"]
         self._classes = ["loss", "win"]
         self._label = "win"
 
         # learn configuration
-        self._steps = 200  # per batch
+        self._steps = 1000  # per batch
         self._batchsize = 500
-        self._max_batches = 5  # number of batches to train
+        self._max_batches = 20  # number of batches to train
 
         # database mappings
         # TODO cache, rm duplicated code
         self._trainquery = """
             SELECT
-                participant.kills,
-                participant.deaths,
-                participant.assists,
-                participant.farm,
-                roster.hero_kills,
+                kills/duration::float,
+                deaths/duration::float,
+                assists/duration::float,
                 participant.winner,
                 participant.api_id
             FROM participant
@@ -70,11 +68,9 @@ class KDAClassifier(object):
         """
         self._testquery = """
             SELECT
-                participant.kills,
-                participant.deaths,
-                participant.assists,
-                participant.farm,
-                roster.hero_kills,
+                kills/duration::float,
+                deaths/duration::float,
+                assists/duration::float,
                 participant.winner,
                 participant.api_id
             FROM participant
@@ -100,15 +96,13 @@ class KDAClassifier(object):
         else:
             cur.execute(self._testquery, (filter,))
         ids = []
-        data = {"kills": [], "deaths": [], "assists": [], "win": [], "cs": [], "teamkills": []}
+        data = {"kills": [], "deaths": [], "assists": [], "win": []}
         for rec in cur:
             data["kills"].append(rec[0])
             data["deaths"].append(rec[1])
             data["assists"].append(rec[2])
-            data["cs"].append(rec[3])
-            data["teamkills"].append(rec[4])
-            data["win"].append(rec[5])
-            ids.append(rec[6])
+            data["win"].append(rec[3])
+            ids.append(rec[4])
         cur.close()
         logging.debug(data)
         return data, ids
@@ -122,7 +116,7 @@ class KDAClassifier(object):
         emb_columns = [
             tf.contrib.layers.embedding_column(
                 sparse_id_column=col,
-                dimension=5  # log_2(number of unique features)  TODO
+                dimension=2  # log_2(number of unique features)  TODO
             )
             for col in feature_columns
         ] + [
@@ -185,7 +179,7 @@ class KDAClassifier(object):
         # get one batch of testing data
         # TODO either terminate with `eval_steps` or with OutOfRangeError
         validation_monitor = tf.contrib.learn.monitors.ValidationMonitor(
-            input_fn=lambda: self._toinput(self._get_sample(size=1000)[0], train=True),
+            input_fn=lambda: self._toinput(self._get_sample(size=2000)[0], train=True),
             eval_steps=1,
             every_n_steps=10
         )
@@ -255,7 +249,6 @@ class Analyzer(joblib.worker.Worker):
         self._pool = await asyncpg.create_pool(**dbconf)
         self.classifier = KDAClassifier()
         self.classifier.connect(**dbconf)
-        self.classifier._step = 1000  # TODO test batch size
 
     async def setup(self):
         """Setup the model."""
