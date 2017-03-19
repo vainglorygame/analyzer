@@ -283,15 +283,13 @@ class Analyzer(joblib.worker.Worker):
                      object_type, object_id)
 
 async def startup():
-    for _ in range(1):
-        worker = Analyzer()
-        await worker.connect(db_config, queue_db)
-        await worker.setup()
-        await worker.start(batchlimit=1000)
+    worker = Analyzer()
+    await worker.connect(db_config, queue_db)
+    await worker.setup()
+    await worker.run(batchlimit=1000)
 
 
 logging.basicConfig(level=logging.DEBUG)
 
 loop = asyncio.get_event_loop()
 loop.run_until_complete(startup())
-loop.run_forever()
