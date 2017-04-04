@@ -150,6 +150,8 @@ class Model(object):
             data[key] = np.array(data[key])
         labels = np.array(labels)
 
+        logging.info("sample size: %s", len(labels))
+
         return tf.contrib.learn.io.numpy_input_fn(
             data, labels, batch_size=self.batchsize,
             num_epochs=self.steps)
@@ -212,8 +214,8 @@ def process():
     jobs = queue[:]
     queue = []
 
-    logging.info("analyzing batch " + str(len(jobs)))
-    ids = list(set([id for _, _, id in jobs]))
+    logging.info("analyzing batch %s", str(len(jobs)))
+    ids = list(set([str(id, "utf-8") for _, _, id in jobs]))
     ratings = mvpmodel.rate(ids)
 
     with db.no_autoflush:
@@ -232,6 +234,10 @@ def process():
     # ack all until this one
     logging.info("acking batch")
     channel.basic_ack(jobs[-1][0].delivery_tag, multiple=True)
+    # notify web
+    for api_id in ids:
+        channel.basic_publish("amq.topic", "participant." + api_id,
+                              "stats_update")
 
 
 logging.basicConfig(level=logging.INFO)
