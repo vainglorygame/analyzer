@@ -1,31 +1,54 @@
 #!/usr/bin/python3
 import os
+import time
 import random
-import itertools
 import logging
+import itertools
 
-from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session, relationship
+from sqlalchemy.ext.automap import automap_base
+from sqlalchemy.exc import OperationalError
 from sqlalchemy import create_engine
 
 import tensorflow as tf
 import numpy as np
 
+import pika
 
+
+RABBITMQ_URI = os.environ.get("RABBITMQ_URI") or "amqp://localhost"
 DATABASE_URI = os.environ["DATABASE_URI"]
+BATCHSIZE = os.environ.get("BATCHSIZE") or 1000  # objects
+IDLE_TIMEOUT = os.environ.get("IDLE_TIMEOUT") or 1  # s
 MODEL_ROOT = os.path.join(os.getcwd(), os.path.dirname(__file__))\
         + "/models/"
 
 # ORM definitions
 Match = Roster = Participant = ParticipantExt = Player = None
+db = rabbit = channel = None
+
+# batch storage
+queue = []
+timer = None
+
+# models
+mvpmodel = None
 
 
 def connect():
     global Match, Roster, Participant, ParticipantExt, Player
+    global db, rabbit, channel
+
     # generate schema from db
     Base = automap_base()
     engine = create_engine(DATABASE_URI)
-    Base.prepare(engine, reflect=True)
+    while True:
+        try:
+            Base.prepare(engine, reflect=True)
+            break
+        except OperationalError as err:
+            logging.error(err)
+            time.sleep(5)
 
     # definitions
     # TODO check whether the primaryjoin clause is the best method to do this
@@ -47,7 +70,19 @@ def connect():
         primaryjoin="and_(participant_ext.participant_api_id == participant.api_id)")
     Player = Base.classes.player
 
-    return Session(engine)
+    db = Session(engine)
+
+    while True:
+        try:
+            rabbit = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URI))
+            break
+        except pika.exceptions.ConnectionClosed as err:
+            logging.error(err)
+            time.sleep(5)
+    channel = rabbit.channel()
+    channel.queue_declare(queue="analyze", durable=True)
+    channel.basic_qos(prefetch_count=BATCHSIZE)
+    channel.basic_consume(newjob, queue="analyze")
 
 
 class Model(object):
@@ -96,7 +131,9 @@ class Model(object):
                 Participant).offset(offset).limit(size).all()
         else:
             records = self._db.query(
-                Participant).filter(Participant.api_id.in_(ids)).all()
+                Participant).filter(
+                    Participant.api_id.in_(ids)).order_by(
+                        Participant.api_id.desc()).all()
 
         data = {}
         labels = []
@@ -154,11 +191,54 @@ class MVPScoreModel(Model):
         # for training, rating = participant.winner
         return record.winner
 
+    def rate(self, ids):
+        return [w for l, w in self.predict(ids)]
+
+
+def newjob(_, method, properties, body):
+    global timer, queue
+    queue.append((method, properties, body))
+    if timer is None:
+        timer = rabbit.add_timeout(IDLE_TIMEOUT, process)
+    if len(queue) == BATCHSIZE:
+        process()
+
+
+def process():
+    global timer, queue, db, mvpmodel
+    if timer is not None:
+        rabbit.remove_timeout(timer)
+        timer = None
+    jobs = queue[:]
+    queue = []
+
+    logging.info("analyzing batch " + str(len(jobs)))
+    ids = list(set([id for _, _, id in jobs]))
+    ratings = mvpmodel.rate(ids)
+
+    with db.no_autoflush:
+        for c in range(len(ratings)):
+            rating = float(ratings[c])
+            pext = db.query(ParticipantExt).filter(
+                ParticipantExt.participant_api_id == ids[c]).first()
+            # manual upsert
+            if pext is None:
+                db.add(ParticipantExt(participant_api_id=ids[c],
+                                      score=rating))
+            else:
+                pext.score = rating
+
+    db.commit()
+    # ack all until this one
+    logging.info("acking batch")
+    channel.basic_ack(jobs[-1][0].delivery_tag, multiple=True)
+
 
 logging.basicConfig(level=logging.INFO)
 if __name__ == "__main__":
-    db = connect()
-    model = MVPScoreModel(db)
-    model.train(force=True)
+    connect()
+    mvpmodel = MVPScoreModel(db)
+    mvpmodel.train()
+    logging.info(mvpmodel._model.evaluate(input_fn=mvpmodel._batch(), steps=1))
 
-    print(model._model.evaluate(input_fn=model._batch(), steps=1))
+    channel.start_consuming()
