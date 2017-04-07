@@ -121,8 +121,8 @@ class Model(object):
             return vars(record.roster[0].match[0])[column]
         raise KeyError("Invalid path " + path)
 
-    def _batch(self, ids=[], size=None):
-        if len(ids) == 0:  # training, get random sample
+    def _batch(self, ids=None, size=None):
+        if ids is None:  # training, get random sample
             size = size or self.batchsize
             # train a model one batch
             offset = random.random() * self._db.query(Participant).count()
@@ -151,6 +151,8 @@ class Model(object):
         labels = np.array(labels)
 
         logging.info("sample size: %s", len(labels))
+        if ids is not None:
+            assert len(ids) == len(labels), "got nonexisting participant"
 
         return tf.contrib.learn.io.numpy_input_fn(
             data, labels, batch_size=self.batchsize,
