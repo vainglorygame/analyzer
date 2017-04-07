@@ -1,4 +1,4 @@
-FROM tensorflow/tensorflow:1.0.1-py3
+FROM tensorflow/tensorflow:1.1.0-rc1-py3
 
 RUN mkdir -p /usr/src/app
 WORKDIR /usr/src/app
