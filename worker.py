@@ -64,10 +64,10 @@ def connect():
     Participant.player = relationship(
         "player", foreign_keys="player.api_id",
         primaryjoin="and_(player.api_id == participant.player_api_id)")
-    ParticipantExt = Base.classes.participant_ext
-    Participant.participant_ext = relationship(
-        "participant_ext", foreign_keys="participant_ext.participant_api_id",
-        primaryjoin="and_(participant_ext.participant_api_id == participant.api_id)")
+    ParticipantExt = Base.classes.participant_stats
+    Participant.participant_stats = relationship(
+        "participant_stats", foreign_keys="participant_stats.participant_api_id",
+        primaryjoin="and_(participant_stats.participant_api_id == participant.api_id)")
     Player = Base.classes.player
 
     db = Session(engine)
@@ -111,8 +111,8 @@ class Model(object):
         table, column = path.split(".")
         if table == "participant":
             return vars(record)[column]
-        if table == "participant_ext":
-            return vars(record.participant_ext[0])[column]
+        if table == "participant_stats":
+            return vars(record.participant_stats[0])[column]
         if table == "player":
             return vars(record.player[0])[column]
         if table == "roster":
@@ -181,7 +181,7 @@ class MVPScoreModel(Model):
     def __init__(self, db):
         self.features = ["participant.kills", "participant.deaths",
                          "participant.assists"]
-        self.label = "participant_ext.rating"
+        self.label = "participant_stats.impact_score"
         self.type = "linear"
         self.batches = 1
         self.batchsize = 500
@@ -221,14 +221,14 @@ def process():
     with db.no_autoflush:
         for c in range(len(ratings)):
             rating = float(ratings[c])
-            pext = db.query(ParticipantExt).filter(
+            pstat = db.query(ParticipantExt).filter(
                 ParticipantExt.participant_api_id == ids[c]).first()
             # manual upsert
-            if pext is None:
+            if pstat is None:
                 db.add(ParticipantExt(participant_api_id=ids[c],
                                       score=rating))
             else:
-                pext.score = rating
+                pstat.score = rating
 
     db.commit()
     # ack all until this one
