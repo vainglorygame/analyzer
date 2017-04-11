@@ -24,7 +24,7 @@ MODEL_ROOT = os.path.join(os.getcwd(), os.path.dirname(__file__))\
         + "/models/"
 
 # ORM definitions
-Match = Roster = Participant = ParticipantExt = Player = None
+Match = Roster = Participant = ParticipantStats = Player = None
 db = rabbit = channel = None
 
 # batch storage
@@ -36,7 +36,7 @@ mvpmodel = None
 
 
 def connect():
-    global Match, Roster, Participant, ParticipantExt, Player
+    global Match, Roster, Participant, ParticipantStats, Player
     global db, rabbit, channel
 
     # generate schema from db
@@ -64,7 +64,7 @@ def connect():
     Participant.player = relationship(
         "player", foreign_keys="player.api_id",
         primaryjoin="and_(player.api_id == participant.player_api_id)")
-    ParticipantExt = Base.classes.participant_stats
+    ParticipantStats = Base.classes.participant_stats
     Participant.participant_stats = relationship(
         "participant_stats", foreign_keys="participant_stats.participant_api_id",
         primaryjoin="and_(participant_stats.participant_api_id == participant.api_id)")
@@ -181,8 +181,9 @@ class Model(object):
 
 class MVPScoreModel(Model):
     def __init__(self, db):
-        self.features = ["participant.kills", "participant.deaths",
-                         "participant.assists"]
+        self.features = ["participant_stats.kills",
+                         "participant_stats.deaths",
+                         "participant_stats.assists"]
         self.label = "participant_stats.impact_score"
         self.type = "linear"
         self.batches = 1
@@ -223,11 +224,11 @@ def process():
     with db.no_autoflush:
         for c in range(len(ratings)):
             rating = float(ratings[c])
-            pstat = db.query(ParticipantExt).filter(
-                ParticipantExt.participant_api_id == ids[c]).first()
+            pstat = db.query(ParticipantStats).filter(
+                ParticipantStats.participant_api_id == ids[c]).first()
             # manual upsert
             if pstat is None:
-                db.add(ParticipantExt(participant_api_id=ids[c],
+                db.add(ParticipantStats(participant_api_id=ids[c],
                                       score=rating))
             else:
                 pstat.score = rating
