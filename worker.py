@@ -223,15 +223,15 @@ def process():
 
     with db.no_autoflush:
         for c in range(len(ratings)):
-            rating = float(ratings[c])
+            rating = int(100 * float(ratings[c]))
             pstat = db.query(ParticipantStats).filter(
                 ParticipantStats.participant_api_id == ids[c]).first()
             # manual upsert
             if pstat is None:
                 db.add(ParticipantStats(participant_api_id=ids[c],
-                                      score=rating))
+                                        impact_score=rating))
             else:
-                pstat.score = rating
+                pstat.impact_score = rating
 
     db.commit()
     # ack all until this one
