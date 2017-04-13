@@ -27,8 +27,8 @@ mvpmodel = None
 
 
 def connect():
-    global Match, Roster, Participant, ParticipantStats, Player
     global db
+    global Match, Roster, Participant, Hero, ParticipantStats, Player
 
     # generate schema from db
     Base = automap_base()
@@ -58,6 +58,7 @@ def connect():
     Participant.hero = relationship(
         "hero", foreign_keys="hero.id",
         primaryjoin="and_(hero.id == participant.hero_id)")
+    Hero = Base.classes.hero
     ParticipantStats = Base.classes.participant_stats
     Participant.participant_stats = relationship(
         "participant_stats", foreign_keys="participant_stats.participant_api_id",
@@ -67,71 +68,65 @@ def connect():
     db = Session(engine)
 
 
-class Model(object):
-    # override this configuration
-    features = []
-    label = ""
-    type = ""
-    batches = 1
-    batchsize = 1
-    steps = 0
-    id = "unlabeled"
-
+class RoleModel(object):
     def __init__(self, db):
-        self._db = db
-        self._feature_cols = [tf.contrib.layers.real_valued_column(
-            feat, dimension=1) for feat in self.features]
-        if self.type == "linear":
-            self._model = tf.contrib.learn.LinearClassifier(
-                feature_columns=self._feature_cols,
-                model_dir=MODEL_ROOT + self.id,
-                config=tf.contrib.learn.RunConfig(
-                    save_checkpoints_secs=1))
+        self.batches = 15
+        self.batchsize = 300
+        self.steps = 500
+        self.id = "role-kda"
 
-    def _from_record(self, path, record):
-        table, column = path.split(".")
-        if table == "participant":
-            return vars(record)[column]
-        if table == "participant_stats":
-            return vars(record.participant_stats[0])[column]
-        if table == "player":
-            return vars(record.player[0])[column]
-        if table == "roster":
-            return vars(record.roster[0])[column]
-        if table == "match":
-            return vars(record.roster[0].match[0])[column]
-        raise KeyError("Invalid path " + path)
+        self._db = db
+        self._feature_cols = [
+            tf.contrib.layers.real_valued_column("kills_per_min", dimension=1),
+            tf.contrib.layers.real_valued_column("deaths_per_min", dimension=1),
+            tf.contrib.layers.real_valued_column("assists_per_min", dimension=1)
+        ]
+        self._model = tf.contrib.learn.LinearClassifier(
+            feature_columns=self._feature_cols,
+            model_dir=MODEL_ROOT + self.id,
+            config=tf.contrib.learn.RunConfig(
+                save_checkpoints_secs=1))
 
     def _batch(self, ids=None, size=None):
         if ids is None:  # training, get random sample
             size = size or self.batchsize
             # train a model one batch
-            offset = random.random() * self._db.query(Participant).count()
+            offset = int(random.random() * self._db.query(Participant)\
+                .filter(Participant.hero.any(is_captain=True))\
+                .count())
             # have a bit of randomness in the sample
-            records = self._db.query(
-                Participant).offset(offset).limit(size).all()
+            records = self._db.query(Participant)\
+                .filter(Participant.hero.any(is_captain=True))\
+                .offset(offset).limit(size)\
+                .all()
         else:
-            records = self._db.query(
-                Participant).filter(
-                    Participant.api_id.in_(ids)).order_by(
-                        Participant.api_id.desc()).all()
+            records = self._db.query(Participant)\
+                .filter(Hero.is_carry)\
+                .filter(Participant.api_id.in_(ids))\
+                .order_by(Participant.api_id.desc())\
+                .all()
 
         data = {}
         labels = []
         # populate from db records
+        data["kills_per_min"] = []
+        data["deaths_per_min"] = []
+        data["assists_per_min"] = []
         for record in records:
-            labels.append(self.estimate(record))
-            for path in self.features:
-                if path not in data:
-                    data[path] = []
-                data[path].append(self._from_record(path, record))
+            labels.append(record.winner)
+            data["kills_per_min"].append(record.participant_stats[0].kills
+                / record.roster[0].match[0].duration)
+            data["deaths_per_min"].append(record.participant_stats[0].deaths
+                / record.roster[0].match[0].duration)
+            data["assists_per_min"].append(record.participant_stats[0].assists
+                / record.roster[0].match[0].duration)
 
+        logging.info("---------- %s data points for training ---------", len(labels))
         # convert to numpy arrs
         for key in data:
             data[key] = np.array(data[key])
         labels = np.array(labels)
 
-        logging.info("sample size: %s", len(labels))
         if ids is not None:
             assert len(ids) == len(labels), "got nonexisting participant"
 
@@ -160,33 +155,11 @@ class Model(object):
         pass
 
 
-class MVPScoreModel(Model):
-    def __init__(self, db):
-        self.features = ["participant_stats.kills",
-                         "participant_stats.deaths",
-                         "participant_stats.assists",
-                         "roster.hero_kills"]
-        self.label = "participant_stats.impact_score"
-        self.type = "linear"
-        self.batches = 1
-        self.batchsize = 500
-        self.steps = 500
-        self.id = "kda-win"
-        super().__init__(db)
-
-    def estimate(self, record):
-        # for training, rating = participant.winner
-        return record.winner
-
-    def rate(self, ids):
-        return [w for l, w in self.predict(ids)]
-
-
 logging.basicConfig(level=logging.INFO)
 if __name__ == "__main__":
     connect()
-    mvpmodel = MVPScoreModel(db)
-    mvpmodel.train(force=True)
-    for name in mvpmodel._model.get_variable_names():
+    rolemodel = RoleModel(db)
+    rolemodel.train()
+    for name in rolemodel._model.get_variable_names():
         logging.info("%s: %s", name,
-                     mvpmodel._model.get_variable_value(name))
+                     rolemodel._model.get_variable_value(name))
