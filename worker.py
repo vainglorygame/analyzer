@@ -27,7 +27,7 @@ mvpmodel = None
 
 
 def connect():
-    global Match, Roster, Participant, ParticipantStats, Player
+    global Match, Roster, Participant, Hero, ParticipantStats, Player
     global db
 
     # generate schema from db
@@ -58,6 +58,7 @@ def connect():
     Participant.hero = relationship(
         "hero", foreign_keys="hero.id",
         primaryjoin="and_(hero.id == participant.hero_id)")
+    Hero = Base.classes.hero
     ParticipantStats = Base.classes.participant_stats
     Participant.participant_stats = relationship(
         "participant_stats", foreign_keys="participant_stats.participant_api_id",
@@ -106,15 +107,17 @@ class Model(object):
         if ids is None:  # training, get random sample
             size = size or self.batchsize
             # train a model one batch
-            offset = random.random() * self._db.query(Participant).count()
+            offset = random.random() * self._db.query(Participant)\
+                .count()
             # have a bit of randomness in the sample
-            records = self._db.query(
-                Participant).offset(offset).limit(size).all()
+            records = self._db.query(Participant)\
+                .offset(offset).limit(size)\
+                .all()
         else:
-            records = self._db.query(
-                Participant).filter(
-                    Participant.api_id.in_(ids)).order_by(
-                        Participant.api_id.desc()).all()
+            records = self._db.query(Participant)\
+                .filter(Participant.api_id.in_(ids))\
+                .order_by(Participant.api_id.desc())\
+                .all()
 
         data = {}
         labels = []
@@ -162,10 +165,7 @@ class Model(object):
 
 class MVPScoreModel(Model):
     def __init__(self, db):
-        self.features = ["participant_stats.kills",
-                         "participant_stats.deaths",
-                         "participant_stats.assists",
-                         "roster.hero_kills"]
+        self.features = ["participant_stats.non_jungle_minion_kills"]
         self.label = "participant_stats.impact_score"
         self.type = "linear"
         self.batches = 1
