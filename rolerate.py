@@ -70,16 +70,16 @@ def connect():
 
 class RoleModel(object):
     def __init__(self, db):
-        self.batches = 15
+        self.batches = 10
         self.batchsize = 300
-        self.steps = 500
+        self.testsize = 1000
+        self.steps = 300
         self.id = "role-kda"
 
         self._db = db
         self._feature_cols = [
-            tf.contrib.layers.real_valued_column("kills_per_min", dimension=1),
-            tf.contrib.layers.real_valued_column("deaths_per_min", dimension=1),
-            tf.contrib.layers.real_valued_column("assists_per_min", dimension=1)
+            tf.contrib.layers.real_valued_column("lane_cs", dimension=1),
+            tf.contrib.layers.real_valued_column("jungle_cs", dimension=1)
         ]
         self._model = tf.contrib.learn.LinearClassifier(
             feature_columns=self._feature_cols,
@@ -87,48 +87,31 @@ class RoleModel(object):
             config=tf.contrib.learn.RunConfig(
                 save_checkpoints_secs=1))
 
-    def _batch(self, ids=None, size=None):
-        if ids is None:  # training, get random sample
-            size = size or self.batchsize
-            # train a model one batch
-            offset = int(random.random() * self._db.query(Participant)\
-                .filter(Participant.hero.any(is_captain=True))\
-                .count())
-            # have a bit of randomness in the sample
-            records = self._db.query(Participant)\
-                .filter(Participant.hero.any(is_captain=True))\
-                .offset(offset).limit(size)\
-                .all()
-        else:
-            records = self._db.query(Participant)\
-                .filter(Hero.is_carry)\
-                .filter(Participant.api_id.in_(ids))\
-                .order_by(Participant.api_id.desc())\
-                .all()
+    def _batch(self, size=None):
+        size = size or self.batchsize
+        # train a model one batch
+        offset = int(random.random() * self._db.query(Participant)\
+            .count())
+        # have a bit of randomness in the sample
+        records = self._db.query(Participant)\
+            .offset(offset).limit(size)\
+            .all()
 
         data = {}
         labels = []
         # populate from db records
-        data["kills_per_min"] = []
-        data["deaths_per_min"] = []
-        data["assists_per_min"] = []
+        data["lane_cs"] = []
+        data["jungle_cs"] = []
         for record in records:
-            labels.append(record.winner)
-            data["kills_per_min"].append(record.participant_stats[0].kills
-                / record.roster[0].match[0].duration)
-            data["deaths_per_min"].append(record.participant_stats[0].deaths
-                / record.roster[0].match[0].duration)
-            data["assists_per_min"].append(record.participant_stats[0].assists
-                / record.roster[0].match[0].duration)
+            labels.append(record.hero[0].is_jungler)
+            data["lane_cs"].append(record.participant_stats[0].non_jungle_minion_kills)
+            data["jungle_cs"].append(record.participant_stats[0].jungle_kills)
 
         logging.info("---------- %s data points for training ---------", len(labels))
         # convert to numpy arrs
         for key in data:
             data[key] = np.array(data[key])
         labels = np.array(labels)
-
-        if ids is not None:
-            assert len(ids) == len(labels), "got nonexisting participant"
 
         return tf.contrib.learn.io.numpy_input_fn(
             data, labels, batch_size=self.batchsize,
@@ -138,21 +121,12 @@ class RoleModel(object):
     def train(self, force=False):
         if force or not os.path.isdir(MODEL_ROOT + self.id):
             monitor = tf.contrib.learn.monitors.ValidationMonitor(
-                input_fn=self._batch(),
+                input_fn=self._batch(size=self.testsize),
                 eval_steps=1, every_n_steps=20)
             for _ in range(self.batches):
                 self._model.fit(input_fn=self._batch(),
                                 steps=self.steps,
                                 monitors=[monitor])
-
-    def predict(self, ids):
-        return itertools.islice(
-            self._model.predict_proba(input_fn=self._batch(ids)),
-            len(ids))
-
-    def estimate(self, record):
-        # override: calculate or return the label's value
-        pass
 
 
 logging.basicConfig(level=logging.INFO)
