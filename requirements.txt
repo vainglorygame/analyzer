@@ -1,5 +1,6 @@
 appdirs==1.4.3
 cymysql==0.8.9
+mpmath==0.19
 numpy==1.12.1
 packaging==16.8
 pika==0.10.0
@@ -8,4 +9,5 @@ pyparsing==2.2.0
 six==1.10.0
 SQLAlchemy==1.1.9
 tensorflow==1.1.0rc1
+trueskill==0.4.4
 Werkzeug==0.12.1
