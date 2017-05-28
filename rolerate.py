@@ -70,7 +70,7 @@ def connect():
 
 class RoleModel(object):
     def __init__(self, db):
-        self.batches = 10
+        self.batches = 3
         self.batchsize = 300
         self.testsize = 1000
         self.steps = 300
@@ -78,8 +78,10 @@ class RoleModel(object):
 
         self._db = db
         self._feature_cols = [
-            tf.contrib.layers.real_valued_column("lane_cs", dimension=1),
-            tf.contrib.layers.real_valued_column("jungle_cs", dimension=1)
+            tf.contrib.layers.real_valued_column("farm", dimension=1),
+            tf.contrib.layers.real_valued_column("kills", dimension=1),
+            tf.contrib.layers.real_valued_column("deaths", dimension=1),
+            tf.contrib.layers.real_valued_column("assists", dimension=1)
         ]
         self._model = tf.contrib.learn.LinearClassifier(
             feature_columns=self._feature_cols,
@@ -100,12 +102,17 @@ class RoleModel(object):
         data = {}
         labels = []
         # populate from db records
-        data["lane_cs"] = []
-        data["jungle_cs"] = []
+        data["farm"] = []
+        data["kills"] = []
+        data["deaths"] = []
+        data["assists"] = []
         for record in records:
-            labels.append(record.hero[0].is_jungler)
-            data["lane_cs"].append(record.participant_stats[0].non_jungle_minion_kills)
-            data["jungle_cs"].append(record.participant_stats[0].jungle_kills)
+            if (record.hero[0].is_jungler):
+                labels.append(record.winner)
+                data["farm"].append(record.participant_stats[0].farm)
+                data["kills"].append(record.participant_stats[0].kills)
+                data["deaths"].append(record.participant_stats[0].deaths)
+                data["assists"].append(record.participant_stats[0].assists)
 
         logging.info("---------- %s data points for training ---------", len(labels))
         # convert to numpy arrs
