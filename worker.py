@@ -14,7 +14,7 @@ import trueskill
 
 RABBITMQ_URI = os.environ.get("RABBITMQ_URI") or "amqp://localhost"
 DATABASE_URI = os.environ["DATABASE_URI"]
-BATCHSIZE = os.environ.get("BATCHSIZE") or 500  # matches
+BATCHSIZE = os.environ.get("BATCHSIZE") or 200  # matches
 IDLE_TIMEOUT = os.environ.get("IDLE_TIMEOUT") or 1  # s
 
 # ORM definitions
