@@ -139,7 +139,7 @@ def process():
                     sigma = participant.trueskill_sigma or player.trueskill_sigma
                     if mu is None:
                         # no data -> approximate ts by VST
-                        mu = participant.skill_tier * 100
+                        mu = (participant.skill_tier + 0.5) * 100
                         if mu < 1:
                             mu = 1  # unranked
                         sigma = mu / 3
