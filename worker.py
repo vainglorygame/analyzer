@@ -159,6 +159,7 @@ def process():
                 # lower rank is better = winner!
                 for rating, participant in zip(team, roster.participants):
                     player = participant.player[0]
+                    participant.trueskill_delta = (rating.mu + rating.sigma) - (float(player.trueskill_mu) + float(player.trueskill_sigma))
                     if player.trueskill_mu == participant.trueskill_mu \
                        and player.trueskill_sigma == participant.trueskill_sigma:
                         # match hasn't been rated before
