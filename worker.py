@@ -3,7 +3,7 @@ import os
 import time
 import logging
 
-from sqlalchemy.orm import Session, relationship, subqueryload, load_only
+from sqlalchemy.orm import Session, relationship, subqueryload, load_only, selectinload
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.exc import OperationalError
 from sqlalchemy import create_engine
@@ -14,8 +14,27 @@ import trueskill
 
 RABBITMQ_URI = os.environ.get("RABBITMQ_URI") or "amqp://localhost"
 DATABASE_URI = os.environ["DATABASE_URI"]
-BATCHSIZE = os.environ.get("BATCHSIZE") or 200  # matches
-IDLE_TIMEOUT = os.environ.get("IDLE_TIMEOUT") or 1  # s
+BATCHSIZE = int(os.environ.get("BATCHSIZE") or 500)  # matches
+CHUNKSIZE = int(os.environ.get("CHUNKSIZE") or 100)  # matches
+IDLE_TIMEOUT = float(os.environ.get("IDLE_TIMEOUT") or 1)  # s
+
+# mapping from Tier (-1 - 30) to average skill tier points
+vst_points = {
+    -1: 1,
+    0: 1
+}
+for c in range(1, 12):
+    vst_points[c] = (109 + 1/11) * (c + 0.5)
+for c in range(1, 5):
+    vst_points[11 + c] = vst_points[11] + 50 * (c + 0.5)
+for c in range(1, 10):
+    vst_points[15 + c] = vst_points[15] + (66 + 2/3) * (c + 0.5)
+for c in range(1, 4):
+    vst_points[24 + c] = vst_points[24] + (133 + 1/3) * (c + 0.5)
+for c in range(1, 3):
+    vst_points[27 + c] = vst_points[27] + 200 * (c + 0.5)
+# ---
+
 
 # ORM definitions
 Match = Roster = Participant = ParticipantStats = Player = None
@@ -121,15 +140,15 @@ def process():
         )
         for match in db.query(Match).options(\
             load_only("api_id")\
-            .subqueryload(Match.rosters)\
+            .selectinload(Match.rosters)\
                 .load_only("api_id", "match_api_id", "winner")\
-            .subqueryload(Roster.participants)\
+            .selectinload(Roster.participants)\
                 .load_only("api_id", "match_api_id", "roster_api_id",
                            "player_api_id", "skill_tier",
                            "trueskill_sigma", "trueskill_mu")\
-                .subqueryload(Participant.player)\
+                .selectinload(Participant.player)\
                     .load_only("api_id", "trueskill_sigma", "trueskill_mu")\
-         ).filter(Match.api_id.in_(ids)):
+         ).filter(Match.api_id.in_(ids)).yield_per(CHUNKSIZE):
             matchup = []
             for roster in match.rosters:
                 team = []
@@ -139,9 +158,7 @@ def process():
                     sigma = participant.trueskill_sigma or player.trueskill_sigma
                     if mu is None:
                         # no data -> approximate ts by VST
-                        mu = (participant.skill_tier + 0.5) * 100
-                        if mu < 1:
-                            mu = 1  # unranked
+                        mu = vst_points[participant.skill_tier]
                         sigma = mu / 3
                         player.trueskill_mu = mu
                         player.trueskill_sigma = sigma
@@ -151,6 +168,10 @@ def process():
 
                     team.append(env.create_rating(float(mu), float(sigma)))
                 matchup.append(team)
+
+            if len(matchup) != 2:
+                logging.error("got an invalid matchup", match.api_id)
+                continue
 
             # store the fairness of the match
             match.trueskill_quality = env.quality(matchup)
