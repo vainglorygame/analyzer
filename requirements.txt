@@ -7,7 +7,9 @@ pika==0.10.0
 protobuf==3.2.0
 pyparsing==2.2.0
 six==1.10.0
-SQLAlchemy==1.2.0b1.dev0
+snakeviz==0.4.1
+-e git+git://github.com/zzzeek/sqlalchemy@f8b4f7#egg=sqlalchemy
 tensorflow==1.1.0rc1
+tornado==4.5.1
 trueskill==0.4.4
 Werkzeug==0.12.1
