@@ -54,7 +54,7 @@ def connect():
 
     # generate schema from db
     Base = automap_base()
-    engine = create_engine(DATABASE_URI)
+    engine = create_engine(DATABASE_URI, pool_size=1, pool_recycle=3600)
     while True:
         try:
             Base.prepare(engine, reflect=True)
@@ -136,7 +136,8 @@ def process():
             mu=11.0/30*3000,
             sigma=3000/3,
             beta=11.0/30*3000 /2,
-            tau=3000/3 /100
+            tau=3000/3 /100,
+            draw_probability=0
         )
         for match in db.query(Match).options(\
             load_only("api_id")\
@@ -158,7 +159,7 @@ def process():
                     sigma = participant.trueskill_sigma or player.trueskill_sigma
                     if mu is None:
                         # no data -> approximate ts by VST
-                        mu = vst_points[participant.skill_tier]
+                        mu = 3/2 * vst_points[participant.skill_tier]
                         sigma = mu / 3
                         player.trueskill_mu = mu
                         player.trueskill_sigma = sigma
@@ -171,6 +172,7 @@ def process():
 
             if len(matchup) != 2:
                 logging.error("got an invalid matchup", match.api_id)
+                match.trueskill_quality = 0
                 continue
 
             # store the fairness of the match
@@ -180,7 +182,7 @@ def process():
                 # lower rank is better = winner!
                 for rating, participant in zip(team, roster.participants):
                     player = participant.player[0]
-                    participant.trueskill_delta = (rating.mu + rating.sigma) - (float(player.trueskill_mu) + float(player.trueskill_sigma))
+                    participant.trueskill_delta = (rating.mu - rating.sigma) - (float(player.trueskill_mu) - float(player.trueskill_sigma))
                     if player.trueskill_mu == participant.trueskill_mu \
                        and player.trueskill_sigma == participant.trueskill_sigma:
                         # match hasn't been rated before
