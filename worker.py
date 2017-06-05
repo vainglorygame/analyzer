@@ -133,10 +133,10 @@ def process():
     with db.no_autoflush:
         env = trueskill.TrueSkill(
             backend="mpmath",
-            mu=11.0/30*3000,
-            sigma=3000/3,
-            beta=11.0/30*3000 /2,
-            tau=3000/3 /100,
+            mu=1500,
+            sigma=1000,
+            beta=10.0/30*3000,
+            tau=1000/100,
             draw_probability=0
         )
         for match in db.query(Match).options(\
@@ -145,22 +145,25 @@ def process():
                 .load_only("api_id", "match_api_id", "winner")\
             .selectinload(Roster.participants)\
                 .load_only("api_id", "match_api_id", "roster_api_id",
-                           "player_api_id", "skill_tier",
+                           "player_api_id", "skill_tier", "went_afk",
                            "trueskill_sigma", "trueskill_mu")\
                 .selectinload(Participant.player)\
                     .load_only("api_id", "trueskill_sigma", "trueskill_mu")\
          ).filter(Match.api_id.in_(ids)).yield_per(CHUNKSIZE):
             matchup = []
+            anyAfk = False
             for roster in match.rosters:
                 team = []
                 for participant in roster.participants:
+                    if participant.went_afk == 1:
+                        anyAfk = True
+                        break
                     player = participant.player[0]
                     mu = participant.trueskill_mu or player.trueskill_mu
-                    sigma = participant.trueskill_sigma or player.trueskill_sigma
+                    sigma = participant.trueskill_sigma or player.trueskill_sigma or 500
                     if mu is None:
                         # no data -> approximate ts by VST
-                        mu = 3/2 * vst_points[participant.skill_tier]
-                        sigma = mu / 3
+                        mu = vst_points[participant.skill_tier] + sigma
                         player.trueskill_mu = mu
                         player.trueskill_sigma = sigma
                     # store pre match values
@@ -170,10 +173,11 @@ def process():
                     team.append(env.create_rating(float(mu), float(sigma)))
                 matchup.append(team)
 
-            if len(matchup) != 2:
-                logging.error("got an invalid matchup", match.api_id)
+            if len(matchup) != 2 or anyAfk == True:
+                logging.error("got an invalid matchup %s", match.api_id)
                 match.trueskill_quality = 0
                 continue
+            logging.info("got a valid matchup %s", match.api_id)
 
             # store the fairness of the match
             match.trueskill_quality = env.quality(matchup)
