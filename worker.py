@@ -153,11 +153,22 @@ def process():
             matchup = []
             anyAfk = False
             for roster in match.rosters:
-                team = []
                 for participant in roster.participants:
                     if participant.went_afk == 1:
                         anyAfk = True
                         break
+            if len(match.rosters) < 2:
+                logging.error("got an invalid matchup %s", match.api_id)
+                match.trueskill_quality = 0
+                continue
+            if anyAfk:
+                logging.error("got an afk matchup %s", match.api_id)
+                match.trueskill_quality = 0
+                continue
+
+            for roster in match.rosters:
+                team = []
+                for participant in roster.participants:
                     player = participant.player[0]
                     mu = participant.trueskill_mu or player.trueskill_mu
                     sigma = participant.trueskill_sigma or player.trueskill_sigma or 500
@@ -173,10 +184,6 @@ def process():
                     team.append(env.create_rating(float(mu), float(sigma)))
                 matchup.append(team)
 
-            if len(matchup) != 2 or anyAfk == True:
-                logging.error("got an invalid matchup %s", match.api_id)
-                match.trueskill_quality = 0
-                continue
             logging.info("got a valid matchup %s", match.api_id)
 
             # store the fairness of the match
