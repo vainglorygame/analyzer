@@ -17,6 +17,7 @@ DATABASE_URI = os.environ["DATABASE_URI"]
 BATCHSIZE = int(os.environ.get("BATCHSIZE") or 500)  # matches
 CHUNKSIZE = int(os.environ.get("CHUNKSIZE") or 100)  # matches
 IDLE_TIMEOUT = float(os.environ.get("IDLE_TIMEOUT") or 1)  # s
+QUEUE = os.environ.get("QUEUE") or "analyze"
 
 # mapping from Tier (-1 - 30) to average skill tier points
 vst_points = {
@@ -105,9 +106,9 @@ def connect():
             logging.error(err)
             time.sleep(5)
     channel = rabbit.channel()
-    channel.queue_declare(queue="analyze", durable=True)
+    channel.queue_declare(queue=QUEUE, durable=True)
     channel.basic_qos(prefetch_count=BATCHSIZE)
-    channel.basic_consume(newjob, queue="analyze")
+    channel.basic_consume(newjob, queue=QUEUE)
 
 
 def newjob(_, method, properties, body):
