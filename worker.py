@@ -158,7 +158,9 @@ def process():
                     if participant.went_afk == 1:
                         anyAfk = True
                         break
-            if len(match.rosters) < 2:
+            if len(match.rosters) < 2 \
+                or len(match.rosters[0].participants) < 3 \
+                or len(match.rosters[1].participants) < 3:
                 logging.error("got an invalid matchup %s", match.api_id)
                 match.trueskill_quality = 0
                 continue
