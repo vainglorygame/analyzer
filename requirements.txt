@@ -1,5 +1,6 @@
 appdirs==1.4.3
 cymysql==0.8.9
+gmpy==1.17
 mpmath==0.19
 packaging==16.8
 pika==0.10.0
