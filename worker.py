@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 import pika
 import trueskill
 import mpmath
-mpmath.mp.dps = 25  # increase if FloatingPointError
+mpmath.mp.dps = 50  # increase if FloatingPointError
 
 
 RABBITMQ_URI = os.environ.get("RABBITMQ_URI") or "amqp://localhost"
