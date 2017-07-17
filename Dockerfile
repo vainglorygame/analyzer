@@ -4,6 +4,6 @@ RUN mkdir -p /usr/src/app
 WORKDIR /usr/src/app
 
 COPY . /usr/src/app
-RUN apk add --no-cache git && pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir git+git://github.com/zzzeek/sqlalchemy
+RUN pip install --pre --no-cache-dir -r requirements.txt
 
 CMD ["python", "worker.py"]

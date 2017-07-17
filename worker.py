@@ -47,9 +47,6 @@ db = rabbit = channel = None
 queue = []
 timer = None
 
-# models
-mvpmodel = None
-
 
 def connect():
     global Match, Roster, Participant, ParticipantStats, Player
@@ -58,13 +55,7 @@ def connect():
     # generate schema from db
     Base = automap_base()
     engine = create_engine(DATABASE_URI, pool_size=1, pool_recycle=3600)
-    while True:
-        try:
-            Base.prepare(engine, reflect=True)
-            break
-        except OperationalError as err:
-            logging.error(err)
-            time.sleep(5)
+    Base.prepare(engine, reflect=True)
 
     # definitions
     # TODO check whether the primaryjoin clause is the best method to do this
@@ -100,15 +91,10 @@ def connect():
 
     db = Session(engine)
 
-    while True:
-        try:
-            rabbit = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URI))
-            break
-        except pika.exceptions.ConnectionClosed as err:
-            logging.error(err)
-            time.sleep(5)
+    rabbit = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URI))
     channel = rabbit.channel()
     channel.queue_declare(queue=QUEUE, durable=True)
+    channel.queue_declare(queue=QUEUE + "_failed", durable=True)
     channel.basic_qos(prefetch_count=BATCHSIZE)
     channel.basic_consume(newjob, queue=QUEUE)
 
@@ -117,21 +103,36 @@ def newjob(_, method, properties, body):
     global timer, queue
     queue.append((method, properties, body))
     if timer is None:
-        timer = rabbit.add_timeout(IDLE_TIMEOUT, process)
+        timer = rabbit.add_timeout(IDLE_TIMEOUT, try_process)
     if len(queue) == BATCHSIZE:
-        process()
+        try_process()
 
-
-def process():
-    global timer, queue, db, mvpmodel
+def try_process():
+    global timer, queue
     if timer is not None:
         rabbit.remove_timeout(timer)
         timer = None
-    jobs = queue[:]
+    try:
+        process()
+    except e:
+        logging.error(e)
+        for q in queue:
+            # move to error queue and NACK
+            channel.basic_publish("", QUEUE + "_failed", q[1], q[2])
+            channel.basic_nack(q[0].delivery_tag, requeue=False)
+        queue = []
+        return
+
+    logging.info("acking batch")
+    for q in queue:
+        channel.basic_ack(q[0].delivery_tag)
     queue = []
 
-    logging.info("analyzing batch %s", str(len(jobs)))
-    ids = list(set([str(id, "utf-8") for _, _, id in jobs]))
+
+def process():
+    global timer, queue, db
+    logging.info("analyzing batch %s", str(len(queue)))
+    ids = list(set([str(id, "utf-8") for _, _, id in queue]))
 
     with db.no_autoflush:
         env = trueskill.TrueSkill(
@@ -206,9 +207,6 @@ def process():
                         player.trueskill_sigma = rating.sigma
 
     db.commit()
-    # ack all until this one
-    logging.info("acking batch")
-    channel.basic_ack(jobs[-1][0].delivery_tag, multiple=True)
     # notify web
     for api_id in ids:
         channel.basic_publish("amq.topic", "participant." + api_id,
