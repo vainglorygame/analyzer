@@ -114,12 +114,16 @@ def try_process():
         timer = None
     try:
         process()
-    except e:
+    except Exception as e:
         logging.error(e)
-        for q in queue:
+        for meth, prop, body in queue:
             # move to error queue and NACK
-            channel.basic_publish("", QUEUE + "_failed", q[1], q[2])
-            channel.basic_nack(q[0].delivery_tag, requeue=False)
+            print(prop)
+            channel.basic_publish(exchange="",
+                                  routing_key=QUEUE+"_failed",
+                                  body=body,
+                                  properties=prop)
+            channel.basic_nack(meth.delivery_tag, requeue=False)
         queue = []
         return
 
@@ -204,7 +208,7 @@ def process():
                         # match hasn't been rated before
                         player.trueskill_mu = rating.mu
                         player.trueskill_sigma = rating.sigma
-                    participant.trueskill_delta = (participant.mu - participant.sigma) - (float(player.trueskill_mu) - float(player.trueskill_sigma))
+                    participant.trueskill_delta = (float(participant.trueskill_mu) - float(participant.trueskill_sigma)) - (float(player.trueskill_mu) - float(player.trueskill_sigma))
 
     db.commit()
     # notify web
