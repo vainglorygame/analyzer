@@ -20,6 +20,8 @@ BATCHSIZE = int(os.environ.get("BATCHSIZE") or 500)  # matches
 CHUNKSIZE = int(os.environ.get("CHUNKSIZE") or 100)  # matches
 IDLE_TIMEOUT = float(os.environ.get("IDLE_TIMEOUT") or 1)  # s
 QUEUE = os.environ.get("QUEUE") or "analyze"
+DOCRUNCHMATCH = os.environ.get("DOCRUNCHMATCH") == "true"
+CRUNCH_PLAYER_QUEUE = os.environ.get("CRUNCH_PLAYER_QUEUE") or "crunch_player"
 
 # mapping from Tier (-1 - 30) to average skill tier points
 vst_points = {
@@ -128,8 +130,14 @@ def try_process():
         return
 
     logging.info("acking batch")
-    for q in queue:
-        channel.basic_ack(q[0].delivery_tag)
+    for meth, prop, body in queue:
+        channel.basic_ack(meth.delivery_tag)
+        if DOCRUNCHMATCH:
+            # forward to cruncher
+            channel.basic_publish(exchange="",
+                                  routing_key=CRUNCH_PLAYER_QUEUE,
+                                  body=body,
+                                  properties=prop)
     queue = []
 
 
