@@ -120,7 +120,6 @@ def try_process():
         logging.error(e)
         for meth, prop, body in queue:
             # move to error queue and NACK
-            print(prop)
             channel.basic_publish(exchange="",
                                   routing_key=QUEUE+"_failed",
                                   body=body,
