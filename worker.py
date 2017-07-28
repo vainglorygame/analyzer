@@ -52,7 +52,7 @@ timer = None
 
 def connect():
     global Match, Roster, Participant, ParticipantStats, Player
-    global db, rabbit, channel
+    global Session, rabbit, channel
 
     # generate schema from db
     Base = automap_base()
@@ -140,7 +140,7 @@ def try_process():
 
 
 def process():
-    global timer, queue, db
+    global timer, queue, Session
     logging.info("analyzing batch %s", str(len(queue)))
     ids = list(set([str(id, "utf-8") for _, _, id in queue]))
 
@@ -187,13 +187,10 @@ def process():
                 team = []
                 for participant in roster.participants:
                     player = participant.player[0]
-                    mu = participant.trueskill_mu or player.trueskill_mu
-                    sigma = participant.trueskill_sigma or player.trueskill_sigma or 500
-                    if mu is None:
-                        # no data -> approximate ts by VST
-                        mu = vst_points[participant.skill_tier] + sigma
-                        player.trueskill_mu = mu
-                        player.trueskill_sigma = sigma
+                    # no data -> approximate ts by VST
+                    sigma = player.trueskill_sigma or 500
+                    mu = player.trueskill_mu or vst_points[participant.skill_tier] + sigma
+
                     # store pre match values
                     participant.trueskill_mu = mu
                     participant.trueskill_sigma = sigma
