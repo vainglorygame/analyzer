@@ -3,7 +3,7 @@ import os
 import time
 import logging
 
-from sqlalchemy.orm import Session, relationship, subqueryload, load_only, selectinload
+from sqlalchemy.orm import sessionmaker, relationship, subqueryload, load_only, selectinload
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.exc import OperationalError
 from sqlalchemy import create_engine
@@ -57,6 +57,7 @@ def connect():
     # generate schema from db
     Base = automap_base()
     engine = create_engine(DATABASE_URI, pool_size=1, pool_recycle=3600)
+    Session = sessionmaker(bind=engine)
     Base.prepare(engine, reflect=True)
 
     # definitions
@@ -90,8 +91,6 @@ def connect():
         "participant_stats", foreign_keys="participant_stats.participant_api_id",
         primaryjoin="and_(participant_stats.participant_api_id == participant.api_id)")
     Player = Base.classes.player
-
-    db = Session(engine)
 
     rabbit = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URI))
     channel = rabbit.channel()
@@ -145,7 +144,8 @@ def process():
     logging.info("analyzing batch %s", str(len(queue)))
     ids = list(set([str(id, "utf-8") for _, _, id in queue]))
 
-    with db.no_autoflush:
+    db = Session()
+    try:
         env = trueskill.TrueSkill(
             backend="mpmath",
             mu=1500,
@@ -210,18 +210,21 @@ def process():
                 # lower rank is better = winner!
                 for rating, participant in zip(team, roster.participants):
                     player = participant.player[0]
-                    if player.trueskill_mu == participant.trueskill_mu \
-                       and player.trueskill_sigma == participant.trueskill_sigma:
-                        # match hasn't been rated before
-                        player.trueskill_mu = rating.mu
-                        player.trueskill_sigma = rating.sigma
+                    player.trueskill_mu = rating.mu
+                    player.trueskill_sigma = rating.sigma
+                    # delta = pre - current
                     participant.trueskill_delta = (float(participant.trueskill_mu) - float(participant.trueskill_sigma)) - (float(player.trueskill_mu) - float(player.trueskill_sigma))
 
-    db.commit()
-    # notify web
-    for api_id in ids:
-        channel.basic_publish("amq.topic", "participant." + api_id,
-                              "stats_update")
+        db.commit()
+        # notify web
+        for api_id in ids:
+            channel.basic_publish("amq.topic", "participant." + api_id,
+                                  "stats_update")
+    except:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 logging.basicConfig(level=logging.INFO)
