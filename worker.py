@@ -22,6 +22,8 @@ IDLE_TIMEOUT = float(os.environ.get("IDLE_TIMEOUT") or 1)  # s
 QUEUE = os.environ.get("QUEUE") or "analyze"
 DOCRUNCHMATCH = os.environ.get("DOCRUNCHMATCH") == "true"
 CRUNCH_PLAYER_QUEUE = os.environ.get("CRUNCH_PLAYER_QUEUE") or "crunch_player"
+DOTELESUCKMATCH = os.environ.get("DOTELESUCKMATCH") == "true"
+TELESUCK_QUEUE = os.environ.get("TELESUCK_QUEUE") or "telesuck"
 
 # mapping from Tier (-1 - 30) to average skill tier points
 vst_points = {
@@ -134,6 +136,12 @@ def try_process():
             # forward to cruncher
             channel.basic_publish(exchange="",
                                   routing_key=CRUNCH_PLAYER_QUEUE,
+                                  body=body,
+                                  properties=prop)
+        if DOTELESUCKMATCH:
+            # forward to telesucker
+            channel.basic_publish(exchange="",
+                                  routing_key=TELESUCK_QUEUE,
                                   body=body,
                                   properties=prop)
     queue = []
