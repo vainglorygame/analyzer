@@ -44,7 +44,7 @@ for c in range(1, 3):
 
 
 # ORM definitions
-Match = Roster = Participant = ParticipantStats = Player = None
+Match = Asset = Roster = Participant = ParticipantStats = Player = None
 db = rabbit = channel = None
 
 # batch storage
@@ -53,17 +53,18 @@ timer = None
 
 
 def connect():
-    global Match, Roster, Participant, ParticipantStats, Player
+    global Match, Asset, Roster, Participant, ParticipantStats, Player
     global Session, rabbit, channel
 
     # generate schema from db
     Base = automap_base()
     engine = create_engine(DATABASE_URI, pool_size=1, pool_recycle=3600)
-    Session = sessionmaker(bind=engine)
+    Session = sessionmaker(bind=engine, autoflush=False)
     Base.prepare(engine, reflect=True)
 
     # definitions
     # TODO check whether the primaryjoin clause is the best method to do this
+    Asset = Base.classes.asset
     Match = Base.classes.match
     Match.rosters = relationship(
         "roster", foreign_keys="roster.match_api_id",
@@ -98,6 +99,8 @@ def connect():
     channel = rabbit.channel()
     channel.queue_declare(queue=QUEUE, durable=True)
     channel.queue_declare(queue=QUEUE + "_failed", durable=True)
+    channel.queue_declare(queue=CRUNCH_PLAYER_QUEUE, durable=True)
+    channel.queue_declare(queue=TELESUCK_QUEUE, durable=True)
     channel.basic_qos(prefetch_count=BATCHSIZE)
     channel.basic_consume(newjob, queue=QUEUE)
 
@@ -130,20 +133,32 @@ def try_process():
         return
 
     logging.info("acking batch")
+    db = Session(autocommit=True, autoflush=False)  # ro session to get Telemetry URLs
     for meth, prop, body in queue:
         channel.basic_ack(meth.delivery_tag)
         if DOCRUNCHMATCH:
+            # TODO adds match api ids
             # forward to cruncher
             channel.basic_publish(exchange="",
                                   routing_key=CRUNCH_PLAYER_QUEUE,
                                   body=body,
                                   properties=prop)
         if DOTELESUCKMATCH:
-            # forward to telesucker
-            channel.basic_publish(exchange="",
-                                  routing_key=TELESUCK_QUEUE,
-                                  body=body,
-                                  properties=prop)
+            # forward asset url to telesucker
+            id = str(body, "utf-8")
+            for asset in db.query(Asset).options(\
+                        load_only("url", "match_api_id"))\
+                    .filter(Asset.match_api_id == id).all():
+                channel.basic_publish(exchange="",
+                                      routing_key=TELESUCK_QUEUE,
+                                      body=asset.url,
+                                      properties=pika.BasicProperties(
+                                          headers={
+                                              "match_api_id": asset.match_api_id
+                                          }
+                                      ))
+
+    db.close()
     queue = []
 
 
