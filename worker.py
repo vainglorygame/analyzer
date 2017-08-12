@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import os
+import sys
 import time
 import logging
 
@@ -121,7 +122,7 @@ def try_process():
     try:
         process()
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         for meth, prop, body in queue:
             # move to error queue and NACK
             channel.basic_publish(exchange="",
@@ -132,7 +133,7 @@ def try_process():
         queue = []
         return
 
-    logging.info("acking batch")
+    logger.info("acking batch")
     db = Session(autocommit=True, autoflush=False)  # ro session to get Telemetry URLs
     for meth, prop, body in queue:
         channel.basic_ack(meth.delivery_tag)
@@ -164,7 +165,7 @@ def try_process():
 
 def process():
     global timer, queue, Session
-    logging.info("analyzing batch %s", str(len(queue)))
+    logger.info("analyzing batch %s", str(len(queue)))
     ids = list(set([str(id, "utf-8") for _, _, id in queue]))
 
     db = Session()
@@ -198,11 +199,11 @@ def process():
             if len(match.rosters) < 2 \
                 or len(match.rosters[0].participants) < 3 \
                 or len(match.rosters[1].participants) < 3:
-                logging.error("got an invalid matchup %s", match.api_id)
+                logger.error("got an invalid matchup %s", match.api_id)
                 match.trueskill_quality = 0
                 continue
             if anyAfk:
-                logging.error("got an afk matchup %s", match.api_id)
+                logger.error("got an afk matchup %s", match.api_id)
                 match.trueskill_quality = 0
                 continue
 
@@ -221,7 +222,7 @@ def process():
                     team.append(env.create_rating(float(mu), float(sigma)))
                 matchup.append(team)
 
-            logging.info("got a valid matchup %s", match.api_id)
+            logger.info("got a valid matchup %s", match.api_id)
 
             # store the fairness of the match
             match.trueskill_quality = env.quality(matchup)
@@ -247,7 +248,23 @@ def process():
         db.close()
 
 
-logging.basicConfig(level=logging.INFO)
+# log errs to stderr, debug to stdout
+class InfoFilter(logging.Filter):
+    def filter(self, record):
+        return record.levelno in (logging.DEBUG, logging.INFO)
+
+logger = logging.getLogger("__name__")
+logger.setLevel(logging.INFO)
+
+h1 = logging.StreamHandler(sys.stdout)
+h1.setLevel(logging.INFO)
+h1.addFilter(InfoFilter())
+logger.addHandler(h1)
+
+h2 = logging.StreamHandler(sys.stderr)
+h2.setLevel(logging.WARNING)
+logger.addHandler(h2)
+
 if __name__ == "__main__":
     connect()
     channel.start_consuming()
