@@ -239,8 +239,8 @@ def process():
         db.commit()
         # notify web
         for api_id in ids:
-            channel.basic_publish("amq.topic", "participant." + api_id,
-                                  "stats_update")
+            channel.basic_publish("amq.topic", "match." + api_id,
+                                  "analyze_update")
     except:
         db.rollback()
         raise
