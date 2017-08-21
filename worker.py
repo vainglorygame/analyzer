@@ -25,6 +25,7 @@ DOCRUNCHMATCH = os.environ.get("DOCRUNCHMATCH") == "true"
 CRUNCH_PLAYER_QUEUE = os.environ.get("CRUNCH_PLAYER_QUEUE") or "crunch_player"
 DOTELESUCKMATCH = os.environ.get("DOTELESUCKMATCH") == "true"
 TELESUCK_QUEUE = os.environ.get("TELESUCK_QUEUE") or "telesuck"
+UNKNOWN_PLAYER_SIGMA = os.environ.get("UNKNOWN_PLAYER_SIGMA") or 500
 
 # mapping from Tier (-1 - 30) to average skill tier points
 vst_points = {
@@ -212,7 +213,7 @@ def process():
                 for participant in roster.participants:
                     player = participant.player[0]
                     # no data -> approximate ts by VST
-                    sigma = player.trueskill_sigma or 500
+                    sigma = player.trueskill_sigma or UNKNOWN_PLAYER_SIGMA
                     mu = player.trueskill_mu or vst_points[participant.skill_tier] + sigma
 
                     # store pre match values
