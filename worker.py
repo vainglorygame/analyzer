@@ -234,8 +234,8 @@ def process():
                     player = participant.player[0]
                     player.trueskill_mu = rating.mu
                     player.trueskill_sigma = rating.sigma
-                    # delta = pre - current
-                    participant.trueskill_delta = (float(participant.trueskill_mu) - float(participant.trueskill_sigma)) - (float(player.trueskill_mu) - float(player.trueskill_sigma))
+                    # delta = current - pre
+                    participant.trueskill_delta = (float(player.trueskill_mu) - float(player.trueskill_sigma)) - (float(participant.trueskill_mu) - float(participant.trueskill_sigma))
 
         db.commit()
         # notify web
