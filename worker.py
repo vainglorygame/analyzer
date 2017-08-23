@@ -22,7 +22,7 @@ CHUNKSIZE = int(os.environ.get("CHUNKSIZE") or 100)  # matches
 IDLE_TIMEOUT = float(os.environ.get("IDLE_TIMEOUT") or 1)  # s
 QUEUE = os.environ.get("QUEUE") or "analyze"
 DOCRUNCHMATCH = os.environ.get("DOCRUNCHMATCH") == "true"
-CRUNCH_PLAYER_QUEUE = os.environ.get("CRUNCH_PLAYER_QUEUE") or "crunch_player"
+CRUNCH_QUEUE = os.environ.get("CRUNCH_QUEUE") or "crunch_global"
 DOTELESUCKMATCH = os.environ.get("DOTELESUCKMATCH") == "true"
 TELESUCK_QUEUE = os.environ.get("TELESUCK_QUEUE") or "telesuck"
 UNKNOWN_PLAYER_SIGMA = int(os.environ.get("UNKNOWN_PLAYER_SIGMA")) or 500
@@ -101,7 +101,7 @@ def connect():
     channel = rabbit.channel()
     channel.queue_declare(queue=QUEUE, durable=True)
     channel.queue_declare(queue=QUEUE + "_failed", durable=True)
-    channel.queue_declare(queue=CRUNCH_PLAYER_QUEUE, durable=True)
+    channel.queue_declare(queue=CRUNCH_QUEUE, durable=True)
     channel.queue_declare(queue=TELESUCK_QUEUE, durable=True)
     channel.basic_qos(prefetch_count=BATCHSIZE)
     channel.basic_consume(newjob, queue=QUEUE)
@@ -139,10 +139,9 @@ def try_process():
     for meth, prop, body in queue:
         channel.basic_ack(meth.delivery_tag)
         if DOCRUNCHMATCH:
-            # TODO adds match api ids
-            # forward to cruncher
+            # forward to cruncher_global
             channel.basic_publish(exchange="",
-                                  routing_key=CRUNCH_PLAYER_QUEUE,
+                                  routing_key=CRUNCH_QUEUE,
                                   body=body,
                                   properties=prop)
         if DOTELESUCKMATCH:
