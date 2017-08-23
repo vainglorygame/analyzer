@@ -142,6 +142,12 @@ def try_process():
 
     for meth, prop, body in queue:
         channel.basic_ack(meth.delivery_tag)
+
+        # notify web
+        if prop.headers.get("notify"):
+            channel.basic_publish("amq.topic", prop.headers.get("notify"),
+                                  "analyze_update")
+
         if DOCRUNCHMATCH:
             # forward to cruncher_global
             channel.basic_publish(exchange="",
@@ -243,10 +249,6 @@ def process():
                     participant.trueskill_delta = (float(player.trueskill_mu) - float(player.trueskill_sigma)) - (float(participant.trueskill_mu) - float(participant.trueskill_sigma))
 
         db.commit()
-        # notify web
-        for api_id in ids:
-            channel.basic_publish("amq.topic", "match." + api_id,
-                                  "analyze_update")
     except:
         db.rollback()
         raise
