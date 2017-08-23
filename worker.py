@@ -25,7 +25,7 @@ DOCRUNCHMATCH = os.environ.get("DOCRUNCHMATCH") == "true"
 CRUNCH_QUEUE = os.environ.get("CRUNCH_QUEUE") or "crunch_global"
 DOTELESUCKMATCH = os.environ.get("DOTELESUCKMATCH") == "true"
 TELESUCK_QUEUE = os.environ.get("TELESUCK_QUEUE") or "telesuck"
-UNKNOWN_PLAYER_SIGMA = int(os.environ.get("UNKNOWN_PLAYER_SIGMA")) or 500
+UNKNOWN_PLAYER_SIGMA = int(os.environ.get("UNKNOWN_PLAYER_SIGMA") or 500)
 
 # mapping from Tier (-1 - 30) to average skill tier points
 vst_points = {
