@@ -135,7 +135,11 @@ def try_process():
         return
 
     logger.info("acking batch")
-    db = Session(autocommit=True, autoflush=False)  # ro session to get Telemetry URLs
+    db = None
+    if DOTELESUCKMATCH:
+        # ro session to get Telemetry URLs
+        db = Session(autocommit=True, autoflush=False)
+
     for meth, prop, body in queue:
         channel.basic_ack(meth.delivery_tag)
         if DOCRUNCHMATCH:
@@ -159,7 +163,9 @@ def try_process():
                                           }
                                       ))
 
-    db.close()
+    if db is not None:
+        db.close()
+
     queue = []
 
 
