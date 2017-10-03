@@ -25,6 +25,8 @@ DOCRUNCHMATCH = os.environ.get("DOCRUNCHMATCH") == "true"
 CRUNCH_QUEUE = os.environ.get("CRUNCH_QUEUE") or "crunch_global"
 DOTELESUCKMATCH = os.environ.get("DOTELESUCKMATCH") == "true"
 TELESUCK_QUEUE = os.environ.get("TELESUCK_QUEUE") or "telesuck"
+DOSEWMATCH = os.environ.get("DOSEWMATCH") == "true"
+SEW_QUEUE = os.environ.get("SEW_QUEUE") or "sew"
 UNKNOWN_PLAYER_SIGMA = int(os.environ.get("UNKNOWN_PLAYER_SIGMA") or 500)
 
 # mapping from Tier (-1 - 30) to average skill tier points
@@ -152,6 +154,12 @@ def try_process():
             # forward to cruncher_global
             channel.basic_publish(exchange="",
                                   routing_key=CRUNCH_QUEUE,
+                                  body=body,
+                                  properties=prop)
+        if DOSEWMATCH:
+            # forward to sewer
+            channel.basic_publish(exchange="",
+                                  routing_key=SEW_QUEUE,
                                   body=body,
                                   properties=prop)
         if DOTELESUCKMATCH:
