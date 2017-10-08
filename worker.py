@@ -199,17 +199,21 @@ def process():
             draw_probability=0
         )
         for match in db.query(Match).options(\
-            load_only("api_id")\
+            load_only("api_id", "game_mode")\
             .selectinload(Match.rosters)\
                 .load_only("api_id", "match_api_id", "winner")\
             .selectinload(Roster.participants)\
                 .load_only("api_id", "match_api_id", "roster_api_id",
                            "player_api_id", "skill_tier", "went_afk",
-                           "trueskill_sigma", "trueskill_mu")\
+                           "trueskill_sigma", "trueskill_mu",
+                           "trueskill_ranked_sigma", "trueskill_ranked_mu")\
                 .selectinload(Participant.player)\
-                    .load_only("api_id", "trueskill_sigma", "trueskill_mu")\
+                    .load_only("api_id",
+                               "trueskill_sigma", "trueskill_mu",
+                               "trueskill_ranked_sigma", "trueskill_ranked_mu")\
          ).filter(Match.api_id.in_(ids)).yield_per(CHUNKSIZE):
-            matchup = []
+            matchup = []  # common TS
+            matchup_ranked = []  # queue specific TS
             anyAfk = False
             for roster in match.rosters:
                 for participant in roster.participants:
@@ -228,7 +232,8 @@ def process():
                 continue
 
             for roster in match.rosters:
-                team = []
+                team = []  # combined
+                team_ranked = []  # competitive
                 for participant in roster.participants:
                     player = participant.player[0]
                     # no data -> approximate ts by VST
@@ -240,7 +245,21 @@ def process():
                     participant.trueskill_sigma = sigma
 
                     team.append(env.create_rating(float(mu), float(sigma)))
+
+                    if match.game_mode == "ranked":
+                        # fallback to combined TrueSkill, ranked only TS was introduced in 2.19
+                        sigma_ranked = player.trueskill_ranked_sigma or sigma
+                        mu_ranked = player.trueskill_ranked_mu or mu
+
+                        participant.trueskill_ranked_mu = mu_ranked
+                        participant.trueskill_ranked_sigma = sigma_ranked
+
+                        team_ranked.append(env.create_rating(float(mu_ranked), float(sigma_ranked)))
+
                 matchup.append(team)
+
+                if match.game_mode == "ranked":
+                    matchup_ranked.append(team_ranked)
 
             logger.info("got a valid matchup %s", match.api_id)
 
@@ -255,6 +274,14 @@ def process():
                     player.trueskill_sigma = rating.sigma
                     # delta = current - pre
                     participant.trueskill_delta = (float(player.trueskill_mu) - float(player.trueskill_sigma)) - (float(participant.trueskill_mu) - float(participant.trueskill_sigma))
+
+            if match.game_mode == "ranked":
+                for team, roster in zip(env.rate(matchup_ranked, ranks=[int(not r.winner) for r in match.rosters]),
+                                        match.rosters):
+                    for rating, participant in zip(team, roster.participants):
+                        player = participant.player[0]
+                        player.trueskill_ranked_mu = rating.mu
+                        player.trueskill_ranked_sigma = rating.sigma
 
         db.commit()
     except:
