@@ -48,7 +48,7 @@ for c in range(1, 3):
 
 
 # ORM definitions
-Match = Asset = Roster = Participant = ParticipantStats = Player = None
+Match = Asset = Roster = Participant = ParticipantStats = ParticipantItems = Player = None
 db = rabbit = channel = None
 
 # batch storage
@@ -57,7 +57,7 @@ timer = None
 
 
 def connect():
-    global Match, Asset, Roster, Participant, ParticipantStats, Player
+    global Match, Asset, Roster, Participant, ParticipantStats, ParticipantItems, Player
     global Session, rabbit, channel
 
     # generate schema from db
@@ -97,6 +97,10 @@ def connect():
     Participant.participant_stats = relationship(
         "participant_stats", foreign_keys="participant_stats.participant_api_id",
         primaryjoin="and_(participant_stats.participant_api_id == participant.api_id)")
+    ParticipantItems = Base.classes.participant_items
+    Participant.participant_items = relationship(
+        "participant_items", foreign_keys="participant_items.participant_api_id",
+        primaryjoin="and_(participant_items.participant_api_id == participant.api_id)")
     Player = Base.classes.player
 
     rabbit = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URI))
@@ -204,9 +208,7 @@ def process():
                 .load_only("api_id", "match_api_id", "winner")\
             .selectinload(Roster.participants)\
                 .load_only("api_id", "match_api_id", "roster_api_id",
-                           "player_api_id", "skill_tier", "went_afk",
-                           "trueskill_sigma", "trueskill_mu",
-                           "trueskill_ranked_sigma", "trueskill_ranked_mu")\
+                           "player_api_id", "skill_tier", "went_afk")\
                 .selectinload(Participant.player)\
                     .load_only("api_id",
                                "trueskill_sigma", "trueskill_mu",
@@ -251,8 +253,8 @@ def process():
                         sigma_ranked = player.trueskill_ranked_sigma or sigma
                         mu_ranked = player.trueskill_ranked_mu or mu
 
-                        participant.trueskill_ranked_mu = mu_ranked
-                        participant.trueskill_ranked_sigma = sigma_ranked
+                        participant.participant_items[0].trueskill_ranked_mu = mu_ranked
+                        participant.participant_items[0].trueskill_ranked_sigma = sigma_ranked
 
                         team_ranked.append(env.create_rating(float(mu_ranked), float(sigma_ranked)))
 
