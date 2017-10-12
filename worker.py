@@ -225,11 +225,11 @@ def process():
             if len(match.rosters) < 2 \
                 or len(match.rosters[0].participants) < 3 \
                 or len(match.rosters[1].participants) < 3:
-                logger.info("got an invalid matchup %s", match.api_id)
+                logger.error("got an invalid matchup %s", match.api_id)
                 match.trueskill_quality = 0
                 continue
             if anyAfk:
-                logger.error("got an afk matchup %s", match.api_id)
+                logger.info("got an afk matchup %s", match.api_id)
                 match.trueskill_quality = 0
                 continue
 
