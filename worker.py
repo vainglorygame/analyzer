@@ -28,6 +28,7 @@ TELESUCK_QUEUE = os.environ.get("TELESUCK_QUEUE") or "telesuck"
 DOSEWMATCH = os.environ.get("DOSEWMATCH") == "true"
 SEW_QUEUE = os.environ.get("SEW_QUEUE") or "sew"
 UNKNOWN_PLAYER_SIGMA = int(os.environ.get("UNKNOWN_PLAYER_SIGMA") or 500)
+TAU = float(os.environ.get("TAU") or 1000/100.0)
 
 # mapping from Tier (-1 - 30) to average skill tier points
 vst_points = {
@@ -199,7 +200,7 @@ def process():
             mu=1500,
             sigma=1000,
             beta=10.0/30*3000,
-            tau=1000/100,
+            tau=TAU,
             draw_probability=0
         )
         for match in db.query(Match).options(\
