@@ -29,6 +29,7 @@ DOSEWMATCH = os.environ.get("DOSEWMATCH") == "true"
 SEW_QUEUE = os.environ.get("SEW_QUEUE") or "sew"
 UNKNOWN_PLAYER_SIGMA = int(os.environ.get("UNKNOWN_PLAYER_SIGMA") or 500)
 TAU = float(os.environ.get("TAU") or 1000/100.0)
+RANKED_TAU = float(os.environ.get("RANKED_TAU") or TAU)
 
 # mapping from Tier (-1 - 30) to average skill tier points
 vst_points = {
@@ -203,6 +204,14 @@ def process():
             tau=TAU,
             draw_probability=0
         )
+        ranked_env = trueskill.TrueSkill(
+            backend="mpmath",
+            mu=1500,
+            sigma=1000,
+            beta=10.0/30*3000,
+            tau=RANKED_TAU,
+            draw_probability=0
+        )
         for match in db.query(Match).options(\
             load_only("api_id", "game_mode")\
             .selectinload(Match.rosters)\
@@ -257,7 +266,7 @@ def process():
                         participant.participant_items[0].trueskill_ranked_mu = mu_ranked
                         participant.participant_items[0].trueskill_ranked_sigma = sigma_ranked
 
-                        team_ranked.append(env.create_rating(float(mu_ranked), float(sigma_ranked)))
+                        team_ranked.append(ranked_env.create_rating(float(mu_ranked), float(sigma_ranked)))
 
                 matchup.append(team)
 
@@ -279,7 +288,7 @@ def process():
                     participant.trueskill_delta = (float(player.trueskill_mu) - float(player.trueskill_sigma)) - (float(participant.trueskill_mu) - float(participant.trueskill_sigma))
 
             if match.game_mode == "ranked":
-                for team, roster in zip(env.rate(matchup_ranked, ranks=[int(not r.winner) for r in match.rosters]),
+                for team, roster in zip(ranked_env.rate(matchup_ranked, ranks=[int(not r.winner) for r in match.rosters]),
                                         match.rosters):
                     for rating, participant in zip(team, roster.participants):
                         player = participant.player[0]
