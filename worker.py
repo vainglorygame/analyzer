@@ -212,7 +212,7 @@ def process():
             tau=RANKED_TAU,
             draw_probability=0
         )
-        for match in db.query(Match).options(\
+        for match in db.query(Match).order_by(Match.created_at.asc()).options(\
             load_only("api_id", "game_mode")\
             .selectinload(Match.rosters)\
                 .load_only("api_id", "match_api_id", "winner")\
