@@ -226,21 +226,25 @@ def process():
          ).filter(Match.api_id.in_(ids)).yield_per(CHUNKSIZE):
             matchup = []  # common TS
             matchup_ranked = []  # queue specific TS
+
             anyAfk = False
-            for roster in match.rosters:
-                for participant in roster.participants:
-                    if participant.went_afk == 1:
-                        anyAfk = True
-                        break
-            if len(match.rosters) < 2 \
-                or len(match.rosters[0].participants) < 3 \
-                or len(match.rosters[1].participants) < 3:
+            if len(match.rosters) != 2 \
+                    or len(match.rosters[0].participants) != 3 \
+                    or len(match.rosters[1].participants) != 3:
                 logger.error("got an invalid matchup %s", match.api_id)
-                match.trueskill_quality = 0
-                continue
+                anyAfk = True
+
+            for participant in match.participants:
+                participant.participant_items[0].any_afk = False
+                if participant.went_afk == 1:
+                    logger.info("got an afk matchup %s", match.api_id)
+                    anyAfk = True
+                    break
+
             if anyAfk:
-                logger.info("got an afk matchup %s", match.api_id)
                 match.trueskill_quality = 0
+                for participant in match.participants:
+                    participant.participant_items[0].any_afk = True
                 continue
 
             for roster in match.rosters:
@@ -251,21 +255,12 @@ def process():
                     # no data -> approximate ts by VST
                     sigma = player.trueskill_sigma or UNKNOWN_PLAYER_SIGMA
                     mu = player.trueskill_mu or vst_points[participant.skill_tier] + sigma
-
-                    # store pre match values
-                    participant.trueskill_mu = mu
-                    participant.trueskill_sigma = sigma
-
                     team.append(env.create_rating(float(mu), float(sigma)))
 
                     if match.game_mode == "ranked":
                         # fallback to combined TrueSkill, ranked only TS was introduced in 2.19
                         sigma_ranked = player.trueskill_ranked_sigma or sigma
                         mu_ranked = player.trueskill_ranked_mu or mu
-
-                        participant.participant_items[0].trueskill_ranked_mu = mu_ranked
-                        participant.participant_items[0].trueskill_ranked_sigma = sigma_ranked
-
                         team_ranked.append(ranked_env.create_rating(float(mu_ranked), float(sigma_ranked)))
 
                 matchup.append(team)
@@ -282,18 +277,30 @@ def process():
                 # lower rank is better = winner!
                 for rating, participant in zip(team, roster.participants):
                     player = participant.player[0]
-                    player.trueskill_mu = rating.mu
-                    player.trueskill_sigma = rating.sigma
                     # delta = current - pre
-                    participant.trueskill_delta = (float(player.trueskill_mu) - float(player.trueskill_sigma)) - (float(participant.trueskill_mu) - float(participant.trueskill_sigma))
+                    if player.trueskill_mu is not None:
+                        participant.trueskill_delta = (float(rating.mu) - float(rating.sigma)) - (float(player.trueskill_mu) - float(player.trueskill_sigma))
+                    else:
+                        participant.trueskill_delta = 0
+                    player.trueskill_mu = rating.mu
+                    participant.trueskill_mu = rating.mu
+                    player.trueskill_sigma = rating.sigma
+                    participant.trueskill_sigma = rating.sigma
 
             if match.game_mode == "ranked":
                 for team, roster in zip(ranked_env.rate(matchup_ranked, ranks=[int(not r.winner) for r in match.rosters]),
                                         match.rosters):
                     for rating, participant in zip(team, roster.participants):
                         player = participant.player[0]
+                        pi = participant.participant_items[0]
+                        if player.trueskill_ranked_mu is not None:
+                            pi.trueskill_ranked_delta = (float(rating.mu) - float(rating.sigma)) - (float(player.trueskill_ranked_mu) - float(player.trueskill_ranked_sigma))
+                        else:
+                            pi.trueskill_ranked_delta = 0
                         player.trueskill_ranked_mu = rating.mu
+                        pi.trueskill_ranked_mu = rating.mu
                         player.trueskill_ranked_sigma = rating.sigma
+                        pi.trueskill_ranked_sigma = rating.sigma
 
         db.commit()
     except:
