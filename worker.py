@@ -303,10 +303,10 @@ def process():
                     for rating, participant in zip(team, roster.participants):
                         player = participant.player[0]
                         pi = participant.participant_items[0]
-                        if player.trueskill_ranked_mu is not None:
-                            pi.trueskill_ranked_delta = (float(rating.mu) - float(rating.sigma)) - (float(player.trueskill_ranked_mu) - float(player.trueskill_ranked_sigma))
-                        else:
-                            pi.trueskill_ranked_delta = 0
+                        #if player.trueskill_ranked_mu is not None:
+                        #    pi.trueskill_ranked_delta = (float(rating.mu) - float(rating.sigma)) - (float(player.trueskill_ranked_mu) - float(player.trueskill_ranked_sigma))
+                        #else:
+                        #    pi.trueskill_ranked_delta = 0
                         player.trueskill_ranked_mu = rating.mu
                         pi.trueskill_ranked_mu = rating.mu
                         player.trueskill_ranked_sigma = rating.sigma
