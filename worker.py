@@ -221,6 +221,7 @@ def process():
                            "player_api_id", "skill_tier", "went_afk")\
                 .selectinload(Participant.player)\
                     .load_only("api_id",
+                               "rank_points_ranked",
                                "trueskill_sigma", "trueskill_mu",
                                "trueskill_ranked_sigma", "trueskill_ranked_mu")\
          ).filter(Match.api_id.in_(ids)).yield_per(CHUNKSIZE):
@@ -252,9 +253,18 @@ def process():
                 team_ranked = []  # competitive
                 for participant in roster.participants:
                     player = participant.player[0]
-                    # no data -> approximate ts by VST
-                    sigma = player.trueskill_sigma or UNKNOWN_PLAYER_SIGMA
-                    mu = player.trueskill_mu or vst_points[participant.skill_tier] + sigma
+                    if player.trueskill_mu is not None:
+                        sigma = player.trueskill_sigma
+                        mu = player.trueskill_mu
+                    else:
+                        # approximate by rank points if possible
+                        if player.rank_points_ranked is not None:
+                            sigma = UNKNOWN_PLAYER_SIGMA * (2.0/3.0)  # more accurate = more trust
+                            mu = participant.rank_points_ranked + sigma
+                        else:
+                            # approximate rank points by skill tier
+                            sigma = UNKNOWN_PLAYER_SIGMA
+                            mu = vst_points[participant.skill_tier] + sigma
                     team.append(env.create_rating(float(mu), float(sigma)))
 
                     if match.game_mode == "ranked":
