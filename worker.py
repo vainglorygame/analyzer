@@ -260,7 +260,7 @@ def process():
                         # approximate by rank points if possible
                         if player.rank_points_ranked is not None:
                             sigma = UNKNOWN_PLAYER_SIGMA * (2.0/3.0)  # more accurate = more trust
-                            mu = participant.rank_points_ranked + sigma
+                            mu = float(player.rank_points_ranked) + sigma
                         else:
                             # approximate rank points by skill tier
                             sigma = UNKNOWN_PLAYER_SIGMA
