@@ -4,9 +4,8 @@ import sys
 import time
 import logging
 
-from sqlalchemy.orm import sessionmaker, relationship, subqueryload, load_only, selectinload
+from sqlalchemy.orm import sessionmaker, relationship, load_only
 from sqlalchemy.ext.automap import automap_base
-from sqlalchemy.exc import OperationalError
 from sqlalchemy import create_engine
 
 import pika
@@ -29,7 +28,6 @@ DOSEWMATCH = os.environ.get("DOSEWMATCH") == "true"
 SEW_QUEUE = os.environ.get("SEW_QUEUE") or "sew"
 UNKNOWN_PLAYER_SIGMA = int(os.environ.get("UNKNOWN_PLAYER_SIGMA") or 500)
 TAU = float(os.environ.get("TAU") or 1000/100.0)
-RANKED_TAU = float(os.environ.get("RANKED_TAU") or TAU)
 
 # mapping from Tier (-1 - 30) to average skill tier points
 vst_points = {
@@ -204,29 +202,36 @@ def process():
             tau=TAU,
             draw_probability=0
         )
-        ranked_env = trueskill.TrueSkill(
-            backend="mpmath",
-            mu=1500,
-            sigma=1000,
-            beta=10.0/30*3000,
-            tau=RANKED_TAU,
-            draw_probability=0
-        )
-        for match in db.query(Match).order_by(Match.created_at.asc()).options(\
-            load_only("api_id", "game_mode")\
-            .selectinload(Match.rosters)\
-                .load_only("api_id", "match_api_id", "winner")\
-            .selectinload(Roster.participants)\
+        for match in db.query(Match).order_by(Match.created_at.asc()).options(
+            load_only("api_id", "game_mode")
+            .selectinload(Match.rosters)
+                .load_only("api_id", "match_api_id", "winner")
+            .selectinload(Roster.participants)
                 .load_only("api_id", "match_api_id", "roster_api_id",
-                           "player_api_id", "skill_tier", "went_afk")\
-                .selectinload(Participant.player)\
+                           "player_api_id", "skill_tier", "went_afk")
+                .selectinload(Participant.player)
                     .load_only("api_id",
                                "rank_points_ranked",
                                "trueskill_sigma", "trueskill_mu",
-                               "trueskill_ranked_sigma", "trueskill_ranked_mu")\
+                               "trueskill_casual_sigma", "trueskill_casual_mu",
+                               "trueskill_ranked_sigma", "trueskill_ranked_mu",
+                               "trueskill_blitz_sigma", "trueskill_blitz_mu",
+                               "trueskill_br_sigma", "trueskill_br_mu")
          ).filter(Match.api_id.in_(ids)).yield_per(CHUNKSIZE):
-            matchup = []  # common TS
-            matchup_ranked = []  # queue specific TS
+            trueskill_column = None  # on player
+            if match.game_mode == "casual":  # mode names mapped by processor!!!
+                trueskill_column = "trueskill_casual"
+            if match.game_mode == "ranked":
+                trueskill_column = "trueskill_ranked"
+            if match.game_mode == "blitz":
+                trueskill_column = "trueskill_blitz"
+            if match.game_mode == "br":
+                trueskill_column = "trueskill_br"
+            if trueskill_column is None:
+                logger.info("got unsupported game mode %s", match.game_mode)
+
+            matchup_shared = []  # trueskill shared across all modes
+            matchup = []
 
             anyAfk = False
             if len(match.rosters) != 2 \
@@ -249,40 +254,59 @@ def process():
                 continue
 
             for roster in match.rosters:
-                team = []  # combined
-                team_ranked = []  # competitive
+                team_shared = []
+                team = []
                 for participant in roster.participants:
                     player = participant.player[0]
+
+                    # calculate TrueSkill shared across all modes = starting point for all modes
                     if player.trueskill_mu is not None:
-                        sigma = player.trueskill_sigma
-                        mu = player.trueskill_mu
+                        sigma_shared = player.trueskill_mu
+                        mu_shared = player.trueskill_sigma
                     else:
-                        # approximate by rank points if possible
-                        if player.rank_points_ranked is not None:
-                            sigma = UNKNOWN_PLAYER_SIGMA * (2.0/3.0)  # more accurate = more trust
-                            mu = float(player.rank_points_ranked) + sigma
+                        # fallback 1 - approximate by max(ranked, blitz) points
+                        rank_points = None
+                        if player.rank_points_ranked is not None and player.rank_points_ranked != 0:
+                            rank_points = player.rank_points_ranked
+                        if player.rank_points_blitz is not None and player.rank_points_blitz != 0:
+                            if rank_points is None:
+                                rank_points = player.rank_points_blitz
+                            else:
+                                if player.rank_points_blitz > rank_points:
+                                    rank_points = player.rank_points_blitz
+
+                        if rank_points is not None:
+                            sigma_shared = UNKNOWN_PLAYER_SIGMA * (2.0/3.0)  # more accurate than skill tier = more trust
+                            mu_shared = float(rank_points) + sigma_shared
                         else:
-                            # approximate rank points by skill tier
-                            sigma = UNKNOWN_PLAYER_SIGMA
-                            mu = vst_points[participant.skill_tier] + sigma
+                            # fallback 2 - approximate rank points by skill tier
+                            sigma_shared = UNKNOWN_PLAYER_SIGMA
+                            mu_shared = vst_points[participant.skill_tier] + sigma_shared
+
+                    team_shared.append(env.create_rating(float(mu_shared), float(sigma_shared)))
+
+                    # calculate queue specific TrueSkill
+                    if getattr(player, trueskill_column + "_mu") is not None:
+                        sigma = getattr(player, trueskill_column + "_sigma")
+                        mu = getattr(player, trueskill_column + "_mu")
+                    else:
+                        # fallback 1 - approximate by shared trueskill
+                        sigma = sigma_shared
+                        mu = mu_shared
+
                     team.append(env.create_rating(float(mu), float(sigma)))
 
-                    if match.game_mode == "ranked":
-                        # fallback to combined TrueSkill, ranked only TS was introduced in 2.19
-                        sigma_ranked = player.trueskill_ranked_sigma or sigma
-                        mu_ranked = player.trueskill_ranked_mu or mu
-                        team_ranked.append(ranked_env.create_rating(float(mu_ranked), float(sigma_ranked)))
 
+                matchup_shared.append(team_shared)
                 matchup.append(team)
-
-                if match.game_mode == "ranked":
-                    matchup_ranked.append(team_ranked)
 
             logger.info("got a valid matchup %s", match.api_id)
 
-            # store the fairness of the match
+            # store the fairness of the match using the shared TrueSkill
             match.trueskill_quality = env.quality(matchup)
-            for team, roster in zip(env.rate(matchup, ranks=[int(not r.winner) for r in match.rosters]),
+
+            # shared TrueSkill (participant)
+            for team, roster in zip(env.rate(matchup_shared, ranks=[int(not r.winner) for r in match.rosters]),
                                     match.rosters):
                 # lower rank is better = winner!
                 for rating, participant in zip(team, roster.participants):
@@ -297,20 +321,17 @@ def process():
                     player.trueskill_sigma = rating.sigma
                     participant.trueskill_sigma = rating.sigma
 
-            if match.game_mode == "ranked":
-                for team, roster in zip(ranked_env.rate(matchup_ranked, ranks=[int(not r.winner) for r in match.rosters]),
-                                        match.rosters):
-                    for rating, participant in zip(team, roster.participants):
-                        player = participant.player[0]
-                        pi = participant.participant_items[0]
-                        #if player.trueskill_ranked_mu is not None:
-                        #    pi.trueskill_ranked_delta = (float(rating.mu) - float(rating.sigma)) - (float(player.trueskill_ranked_mu) - float(player.trueskill_ranked_sigma))
-                        #else:
-                        #    pi.trueskill_ranked_delta = 0
-                        player.trueskill_ranked_mu = rating.mu
-                        pi.trueskill_ranked_mu = rating.mu
-                        player.trueskill_ranked_sigma = rating.sigma
-                        pi.trueskill_ranked_sigma = rating.sigma
+            # queue specific TrueSkill (participant_items)
+            # no delta
+            for team, roster in zip(env.rate(matchup, ranks=[int(not r.winner) for r in match.rosters]),
+                                    match.rosters):
+                for rating, participant in zip(team, roster.participants):
+                    player = participant.player[0]
+                    pi = participant.participant_items[0]
+                    setattr(player, trueskill_column + "_mu", rating.mu)
+                    setattr(pi, trueskill_column + "_mu", rating.mu)
+                    setattr(player, trueskill_column + "_sigma", rating.sigma)
+                    setattr(pi, trueskill_column + "_sigma", rating.sigma)
 
         db.commit()
     except:
