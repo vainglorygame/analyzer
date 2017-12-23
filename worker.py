@@ -229,6 +229,7 @@ def process():
                 trueskill_column = "trueskill_br"
             if trueskill_column is None:
                 logger.info("got unsupported game mode %s", match.game_mode)
+                continue
 
             matchup_shared = []  # trueskill shared across all modes
             matchup = []
