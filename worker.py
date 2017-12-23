@@ -258,7 +258,7 @@ def process():
                         mu = player.trueskill_mu
                     else:
                         # approximate by rank points if possible
-                        if player.rank_points_ranked is not None:
+                        if player.rank_points_ranked is not None and player.rank_points_ranked != 0:
                             sigma = UNKNOWN_PLAYER_SIGMA * (2.0/3.0)  # more accurate = more trust
                             mu = float(player.rank_points_ranked) + sigma
                         else:
