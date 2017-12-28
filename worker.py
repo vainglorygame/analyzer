@@ -262,8 +262,8 @@ def process():
 
                     # calculate TrueSkill shared across all modes = starting point for all modes
                     if player.trueskill_mu is not None:
-                        sigma_shared = player.trueskill_mu
-                        mu_shared = player.trueskill_sigma
+                        mu_shared = player.trueskill_mu
+                        sigma_shared = player.trueskill_sigma
                     else:
                         # fallback 1 - approximate by max(ranked, blitz) points
                         rank_points = None
