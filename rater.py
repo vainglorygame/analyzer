@@ -76,6 +76,10 @@ def rate_match(match):
         trueskill_column = "trueskill_blitz"
     if match.game_mode == "br":
         trueskill_column = "trueskill_br"
+    if match.game_mode == "5v5_casual":
+        trueskill_column = "trueskill_5v5_casual"
+    if match.game_mode == "5v5_ranked":
+        trueskill_column = "trueskill_5v5_ranked"
     if trueskill_column is None:
         logger.info("got unsupported game mode %s", match.game_mode)
         return
@@ -84,9 +88,7 @@ def rate_match(match):
     matchup = []
 
     anyAfk = False
-    if len(match.rosters) != 2 \
-            or len(match.rosters[0].participants) != 3 \
-            or len(match.rosters[1].participants) != 3:
+    if len(match.rosters) != 2:
         logger.error("got an invalid matchup %s", match.api_id)
         anyAfk = True
 
