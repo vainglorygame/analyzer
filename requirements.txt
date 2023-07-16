@@ -2,5 +2,5 @@ cymysql==0.9.0
 mpmath==0.19
 pika==0.10.0
 six==1.10.0
-SQLAlchemy==1.2.0b1
+SQLAlchemy==1.3.0
 trueskill==0.4.4
